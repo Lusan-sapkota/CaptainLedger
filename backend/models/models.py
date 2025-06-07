@@ -12,6 +12,8 @@ class User(db.Model):
     password_hash = db.Column(db.String(128), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_sync = db.Column(db.DateTime)
+    email_verified = db.Column(db.Boolean, default=False)
+    email_verified_at = db.Column(db.DateTime, nullable=True)
     
     transactions = db.relationship('Transaction', backref='user', lazy=True)
     loans = db.relationship('Loan', backref='user', lazy=True)

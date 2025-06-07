@@ -1,4 +1,4 @@
-import { StyleSheet, TouchableOpacity, Image, ScrollView } from 'react-native';
+import { StyleSheet, TouchableOpacity, Image, ScrollView, Platform } from 'react-native';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { Href, useRouter } from 'expo-router';
 
@@ -6,6 +6,7 @@ import { Text, View } from '@/components/Themed';
 import { AppColors } from './_layout';
 import { useState, useEffect } from 'react';
 import { getUserProfile } from '@/services/api';
+import { useTheme } from '@/components/ThemeProvider';
 
 const FEATURE_ITEMS = [
   { 
@@ -42,6 +43,7 @@ export default function DashboardScreen() {
   const router = useRouter();
   const [userProfile, setUserProfile] = useState<{email: string} | null>(null);
   const [loading, setLoading] = useState(true);
+  const { isDarkMode, colors } = useTheme();
   
   useEffect(() => {
     const fetchUserProfile = async () => {
@@ -61,47 +63,51 @@ export default function DashboardScreen() {
   }, []);
   
   return (
-    <ScrollView style={styles.scrollView}>
-      <View style={styles.welcomeContainer}>
+    <ScrollView style={[styles.scrollView, { backgroundColor: colors.background }]}>
+      <View style={[styles.welcomeContainer, { backgroundColor: AppColors.secondary }]}>
         <Image
           source={require('@/assets/images/icon.png')}
           style={styles.logo}
         />
-        <Text style={styles.welcomeText}>
+        <Text style={[styles.welcomeText, { color: colors.buttonText }]}>
           Welcome to CaptainLedger
         </Text>
-        <Text style={styles.userEmail}>
+        <Text style={[styles.userEmail, { color: isDarkMode ? 'rgba(255, 255, 255, 0.7)' : 'rgba(255, 255, 255, 0.8)' }]}>
           {loading ? 'Loading...' : userProfile?.email || 'Guest User'}
         </Text>
       </View>
       
-      <View style={styles.summaryCard}>
-        <View style={styles.summaryCardHeader}>
-          <Text style={styles.summaryTitle}>Monthly Overview</Text>
-          <Text style={styles.summaryDate}>October 2023</Text>
+      {/* Monthly Overview Card */}
+      <View style={[styles.summaryCard, { backgroundColor: colors.cardBackground }]}>
+        <View style={[styles.summaryCardHeader, { backgroundColor: colors.cardBackground }]}>
+          <Text style={[styles.summaryTitle, { color: colors.text }]}>Monthly Overview</Text>
+          <Text style={[styles.summaryDate, { color: colors.subText }]}>October 2023</Text>
         </View>
         
-        <View style={styles.summaryRow}>
-          <View style={styles.summaryItem}>
-            <Text style={styles.summaryLabel}>Income</Text>
+        <View style={[styles.summaryRow, { backgroundColor: colors.cardBackground }]}>
+          <View style={[styles.summaryItem, { backgroundColor: colors.cardBackground }]}>
+            <Text style={[styles.summaryLabel, { color: colors.subText }]}>Income</Text>
             <Text style={styles.summaryValuePositive}>$1,500.00</Text>
           </View>
-          <View style={styles.summaryDivider} />
-          <View style={styles.summaryItem}>
-            <Text style={styles.summaryLabel}>Expenses</Text>
+          <View style={[styles.summaryDivider, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }]} />
+          <View style={[styles.summaryItem, { backgroundColor: colors.cardBackground }]}>
+            <Text style={[styles.summaryLabel, { color: colors.subText }]}>Expenses</Text>
             <Text style={styles.summaryValueNegative}>$875.25</Text>
           </View>
         </View>
         
-        <View style={styles.balanceContainer}>
-          <Text style={styles.balanceLabel}>Balance</Text>
+        <View style={[styles.balanceContainer, { 
+          backgroundColor: colors.cardBackground, 
+          borderTopColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' 
+        }]}>
+          <Text style={[styles.balanceLabel, { color: colors.text }]}>Balance</Text>
           <Text style={styles.balanceValue}>+$624.75</Text>
         </View>
       </View>
       
-      <Text style={styles.sectionTitle}>Quick Actions</Text>
+      <Text style={[styles.sectionTitle, { color: colors.text }]}>Quick Actions</Text>
       
-      <View style={styles.featuresContainer}>
+      <View style={[styles.featuresContainer, { backgroundColor: colors.background }]}>
         {FEATURE_ITEMS.map((item) => (
           <TouchableOpacity
             key={item.id}
@@ -111,21 +117,23 @@ export default function DashboardScreen() {
             <View style={[styles.featureIconContainer, { backgroundColor: item.color }]}>
               <FontAwesome name={item.icon as any} size={24} color="white" />
             </View>
-            <Text style={styles.featureTitle}>{item.title}</Text>
+            <Text style={[styles.featureTitle, { color: colors.text }]}>{item.title}</Text>
           </TouchableOpacity>
         ))}
       </View>
       
-      <Text style={styles.sectionTitle}>Recent Transactions</Text>
+      <Text style={[styles.sectionTitle, { color: colors.text }]}>Recent Transactions</Text>
       
-      <View style={styles.recentTransactionsContainer}>
+      <View style={[styles.recentTransactionsContainer, { backgroundColor: colors.cardBackground }]}>
         <RecentTransactionItem 
           category="Food" 
           amount="-$25.99" 
           date="Today" 
           title="Groceries" 
           icon="shopping-basket"
-          color="#FF8C00" 
+          color="#FF8C00"
+          isDarkMode={isDarkMode}
+          colors={colors} 
         />
         <RecentTransactionItem 
           category="Transport" 
@@ -134,6 +142,8 @@ export default function DashboardScreen() {
           title="Uber ride" 
           icon="car"
           color="#4682B4" 
+          isDarkMode={isDarkMode}
+          colors={colors}
         />
         <RecentTransactionItem 
           category="Income" 
@@ -142,6 +152,8 @@ export default function DashboardScreen() {
           title="Salary" 
           icon="briefcase"
           color="#27AE60" 
+          isDarkMode={isDarkMode}
+          colors={colors}
         />
         
         <TouchableOpacity 
@@ -156,30 +168,44 @@ export default function DashboardScreen() {
   );
 }
 
-function RecentTransactionItem({ category, amount, date, title, icon, color }: { 
+function RecentTransactionItem({ 
+  category, 
+  amount, 
+  date, 
+  title, 
+  icon, 
+  color,
+  isDarkMode,
+  colors 
+}: { 
   category: string; 
   amount: string; 
   date: string; 
   title: string;
   icon: string;
   color: string;
+  isDarkMode: boolean;
+  colors: any;
 }) {
   return (
-    <View style={styles.transactionItem}>
-      <View style={styles.transactionLeft}>
+    <View style={[styles.transactionItem, { backgroundColor: colors.cardBackground, borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }]}>
+      <View style={[styles.transactionLeft, { backgroundColor: colors.cardBackground }]}>
         <View style={[styles.transactionIcon, { backgroundColor: color }]}>
           <FontAwesome name={icon as any} size={16} color="white" />
         </View>
-        <View>
-          <Text style={styles.transactionTitle}>{title}</Text>
-          <Text style={styles.transactionCategory}>{category}</Text>
+        <View style={[{ backgroundColor: 'transparent' }]}>
+          <Text style={[styles.transactionTitle, { color: colors.text }]}>{title}</Text>
+          <Text style={[styles.transactionCategory, { color: colors.subText }]}>{category}</Text>
         </View>
       </View>
-      <View>
-        <Text style={amount.includes('-') ? styles.amountNegative : styles.amountPositive}>
+      <View style={[{ backgroundColor: 'transparent' }]}>
+        <Text style={[
+          amount.includes('-') ? styles.amountNegative : styles.amountPositive,
+          { backgroundColor: 'transparent' }
+        ]}>
           {amount}
         </Text>
-        <Text style={styles.transactionDate}>{date}</Text>
+        <Text style={[styles.transactionDate, { color: colors.subText, backgroundColor: 'transparent' }]}>{date}</Text>
       </View>
     </View>
   );
@@ -188,11 +214,10 @@ function RecentTransactionItem({ category, amount, date, title, icon, color }: {
 const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
-    backgroundColor: AppColors.background,
   },
   welcomeContainer: {
     alignItems: 'center',
-    backgroundColor: AppColors.primary,
+    backgroundColor: AppColors.secondary,
     paddingTop: 60,
     paddingBottom: 30,
     paddingHorizontal: 20,
@@ -206,24 +231,27 @@ const styles = StyleSheet.create({
   welcomeText: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: AppColors.white,
   },
   userEmail: {
     fontSize: 16,
-    color: 'rgba(255, 255, 255, 0.8)',
     marginTop: 5,
   },
   summaryCard: {
-    backgroundColor: AppColors.white,
     borderRadius: 12,
     marginHorizontal: 16,
     marginTop: -20,
     padding: 16,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    ...(Platform.OS === 'web'
+      ? { 
+          boxShadow: '0px 2px 4px rgba(0, 0, 0, 0.1)',
+        }
+      : {
+          elevation: 4,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.1,
+          shadowRadius: 4,
+        }),
   },
   summaryCardHeader: {
     flexDirection: 'row',
@@ -234,11 +262,9 @@ const styles = StyleSheet.create({
   summaryTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: AppColors.secondary,
   },
   summaryDate: {
     fontSize: 14,
-    color: AppColors.lightText,
   },
   summaryRow: {
     flexDirection: 'row',
@@ -251,12 +277,10 @@ const styles = StyleSheet.create({
   },
   summaryDivider: {
     width: 1,
-    backgroundColor: 'rgba(0,0,0,0.1)',
     marginHorizontal: 10,
   },
   summaryLabel: {
     fontSize: 14,
-    color: AppColors.lightText,
     marginBottom: 5,
   },
   summaryValuePositive: {
@@ -271,7 +295,6 @@ const styles = StyleSheet.create({
   },
   balanceContainer: {
     borderTopWidth: 1,
-    borderTopColor: 'rgba(0,0,0,0.1)',
     paddingTop: 12,
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -280,7 +303,6 @@ const styles = StyleSheet.create({
   balanceLabel: {
     fontSize: 16,
     fontWeight: '600',
-    color: AppColors.secondary,
   },
   balanceValue: {
     fontSize: 20,
@@ -293,7 +315,6 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginTop: 30,
     marginBottom: 15,
-    color: AppColors.secondary,
   },
   featuresContainer: {
     flexDirection: 'row',
@@ -316,10 +337,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
     textAlign: 'center',
-    color: AppColors.secondary,
   },
   recentTransactionsContainer: {
-    backgroundColor: AppColors.white,
     borderRadius: 12,
     marginHorizontal: 16,
     marginTop: 10,
@@ -331,7 +350,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(0,0,0,0.05)',
     paddingVertical: 12,
   },
   transactionLeft: {
@@ -342,7 +360,6 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: AppColors.primary,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -350,11 +367,9 @@ const styles = StyleSheet.create({
   transactionTitle: {
     fontSize: 15,
     fontWeight: '500',
-    color: AppColors.secondary,
   },
   transactionCategory: {
     fontSize: 13,
-    color: AppColors.lightText,
   },
   amountPositive: {
     fontSize: 15,
@@ -370,7 +385,6 @@ const styles = StyleSheet.create({
   },
   transactionDate: {
     fontSize: 12,
-    color: AppColors.lightText,
     textAlign: 'right',
   },
   viewAllButton: {

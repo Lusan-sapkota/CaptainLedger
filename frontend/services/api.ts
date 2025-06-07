@@ -56,8 +56,14 @@ interface UserProfile {
 }
 
 // Auth APIs
-export const register = (email: string, password: string): Promise<AxiosResponse<AuthResponse>> => {
-  return api.post<AuthResponse>('/auth/register', { email, password });
+export const register = (email: string, password: string, fullName?: string, country?: string, gender?: string): Promise<AxiosResponse<AuthResponse>> => {
+  return api.post<AuthResponse>('/auth/register', { 
+    email, 
+    password,
+    fullName,
+    country,
+    gender
+  });
 };
 
 export const login = (email: string, password: string): Promise<AxiosResponse<AuthResponse>> => {
@@ -160,10 +166,85 @@ export const updateServerURL = async (url: string): Promise<void> => {
 
 // Initialize from stored settings
 export const initializeApi = async (): Promise<void> => {
-  const serverUrl = await AsyncStorage.getItem('server_url');
-  if (serverUrl) {
-    api.defaults.baseURL = `${serverUrl}/api`;
+  try {
+    // Add a timeout for this operation
+    const timeoutPromise = new Promise<void>((_, reject) => 
+      setTimeout(() => reject(new Error('API initialization timeout')), 3000)
+    );
+    
+    const initPromise = async () => {
+      const serverUrl = await AsyncStorage.getItem('server_url');
+      if (serverUrl) {
+        api.defaults.baseURL = `${serverUrl}/api`;
+      }
+      // Add a timeout to all requests
+      api.defaults.timeout = 5000; // 5 seconds timeout
+    };
+    
+    // Race between initialization and timeout
+    await Promise.race([initPromise(), timeoutPromise]);
+  } catch (error) {
+    console.error('Error initializing API:', error);
+    // Ensure we're using default URL when there's an error
+    api.defaults.baseURL = getDefaultApiUrl();
+    api.defaults.timeout = 5000;
   }
+};
+
+// Function to check if backend is available
+export const isBackendAvailable = async (): Promise<boolean> => {
+  try {
+    const response = await fetch(`${api.defaults.baseURL}/status`, { 
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    
+    return response.status === 200;
+  } catch (error) {
+    console.log('Backend not available:', error);
+    return false;
+  }
+};
+
+// Add this function to help test if routes are working
+
+// Function to check if a route exists
+export const checkRouteExists = (route: string): boolean => {
+  const availableRoutes = [
+    '/terms',
+    '/privacy', 
+    '/documentation',
+    '/auth',
+    '/'
+  ];
+  
+  return availableRoutes.includes(route);
+};
+
+// OTP verification interfaces
+interface VerifyOtpRequest {
+  email: string;
+  otp: string;
+}
+
+interface VerifyOtpResponse {
+  success: boolean;
+  message: string;
+  verified: boolean;
+}
+
+interface ResendOtpResponse {
+  success: boolean;
+  message: string;
+}
+
+// OTP verification APIs
+export const verifyOtp = (email: string, otp: string): Promise<AxiosResponse<VerifyOtpResponse>> => {
+  return api.post<VerifyOtpResponse>('/auth/verify-otp', { email, otp });
+};
+
+export const resendOtp = (email: string): Promise<AxiosResponse<ResendOtpResponse>> => {
+  return api.post<ResendOtpResponse>('/auth/resend-otp', { email });
 };
 
 export default api;

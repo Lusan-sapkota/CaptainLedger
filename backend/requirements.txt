@@ -2,6 +2,7 @@ Flask
 Flask-SQLAlchemy
 Flask-Cors
 Flask-JWT-Extended
+Flask-Migrate
 SQLAlchemy
 Werkzeug
 python-dotenv

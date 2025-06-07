@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { StyleSheet, FlatList, TouchableOpacity, TextInput, Modal, ScrollView, ActivityIndicator } from 'react-native';
+import { StyleSheet, FlatList, TouchableOpacity, TextInput, Modal, ScrollView, ActivityIndicator, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 
@@ -12,6 +12,7 @@ import {
   CreateTransactionPayload 
 } from '@/services/api';
 import { AppColors } from './_layout';
+import { useTheme } from '@/components/ThemeProvider';
 
 // Available transaction categories
 const CATEGORIES = ['Food', 'Transport', 'Entertainment', 'Bills', 'Shopping', 'Health', 'Income', 'Other'];
@@ -21,6 +22,8 @@ export default function TransactionsScreen() {
   const [modalVisible, setModalVisible] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { isDarkMode, colors } = useTheme();
+  
   const [newTransaction, setNewTransaction] = useState<{
     amount: string;
     currency: string;
@@ -109,24 +112,25 @@ export default function TransactionsScreen() {
   };
 
   const renderTransactionItem = ({ item }: { item: Transaction }) => (
-    <View style={styles.transactionItem}>
-      <View style={styles.transactionLeft}>
+    <View style={[styles.transactionItem, { backgroundColor: colors.cardBackground }]}>
+      <View style={[styles.transactionLeft, { backgroundColor: 'transparent' }]}>
         <TouchableOpacity 
           onLongPress={() => handleDeleteTransaction(item.id)}
           style={[styles.categoryIcon, { backgroundColor: getCategoryColor(item.category) }]}
         >
           <Text style={styles.categoryIconText}>{item.category[0]}</Text>
         </TouchableOpacity>
-        <View style={styles.transactionDetails}>
-          <Text style={styles.transactionCategory}>{item.category}</Text>
-          <Text style={styles.transactionNote}>{item.note}</Text>
-          <Text style={styles.transactionDate}>{item.date}</Text>
+        <View style={[styles.transactionDetails, { backgroundColor: 'transparent' }]}>
+          <Text style={[styles.transactionCategory, { color: colors.text }]}>{item.category}</Text>
+          <Text style={[styles.transactionNote, { color: colors.subText }]}>{item.note}</Text>
+          <Text style={[styles.transactionDate, { color: colors.subText }]}>{item.date}</Text>
         </View>
       </View>
       <Text 
         style={[
           styles.transactionAmount,
-          item.amount < 0 ? styles.expense : styles.income
+          item.amount < 0 ? styles.expense : styles.income,
+          { backgroundColor: 'transparent' }
         ]}
       >
         {item.amount < 0 ? '-' : '+'}{item.currency} {Math.abs(item.amount).toFixed(2)}
@@ -135,30 +139,30 @@ export default function TransactionsScreen() {
   );
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header with balance */}
-      <View style={styles.header}>
-        <Text style={styles.balanceLabel}>Total Balance</Text>
-        <Text style={styles.balanceAmount}>
+      <View style={[styles.header, { backgroundColor: isDarkMode ? colors.cardBackground : AppColors.primary }]}>
+        <Text style={[styles.balanceLabel, { color: isDarkMode ? colors.subText : 'rgba(255, 255, 255, 0.8)' }]}>Total Balance</Text>
+        <Text style={[styles.balanceAmount, { color: isDarkMode ? colors.text : AppColors.white }]}>
           {balance >= 0 ? '+' : '-'}USD {Math.abs(balance).toFixed(2)}
         </Text>
       </View>
       
       {/* Transactions list */}
-      <View style={styles.transactionsContainer}>
-        <View style={styles.actionsRow}>
-          <Text style={styles.sectionTitle}>Transactions</Text>
+      <View style={[styles.transactionsContainer, { backgroundColor: colors.background }]}>
+        <View style={[styles.actionsRow, { backgroundColor: 'transparent' }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Transactions</Text>
           <TouchableOpacity onPress={loadTransactions} style={styles.refreshButton}>
             <FontAwesome name="refresh" size={20} color={AppColors.primary} />
           </TouchableOpacity>
         </View>
         
         {loading ? (
-          <View style={styles.loadingContainer}>
+          <View style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
             <ActivityIndicator size="large" color={AppColors.primary} />
           </View>
         ) : error ? (
-          <View style={styles.errorContainer}>
+          <View style={[styles.errorContainer, { backgroundColor: colors.background }]}>
             <Text style={styles.errorText}>{error}</Text>
             <TouchableOpacity style={styles.retryButton} onPress={loadTransactions}>
               <Text style={styles.retryButtonText}>Retry</Text>
@@ -169,10 +173,10 @@ export default function TransactionsScreen() {
             data={transactions}
             renderItem={renderTransactionItem}
             keyExtractor={item => item.id}
-            contentContainerStyle={styles.list}
+            contentContainerStyle={[styles.list, { backgroundColor: colors.background }]}
             ListEmptyComponent={
-              <View style={styles.emptyContainer}>
-                <Text style={styles.emptyText}>No transactions found</Text>
+              <View style={[styles.emptyContainer, { backgroundColor: colors.background }]}>
+                <Text style={[styles.emptyText, { color: colors.subText }]}>No transactions found</Text>
               </View>
             }
           />
@@ -194,14 +198,14 @@ export default function TransactionsScreen() {
         visible={modalVisible}
         onRequestClose={() => setModalVisible(false)}
       >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Add Transaction</Text>
+        <View style={[styles.modalContainer, { backgroundColor: 'rgba(0,0,0,0.5)' }]}>
+          <View style={[styles.modalContent, { backgroundColor: colors.cardBackground }]}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Add Transaction</Text>
             
-            <Text style={styles.inputLabel}>Amount</Text>
-            <View style={styles.amountInputContainer}>
+            <Text style={[styles.inputLabel, { color: colors.text }]}>Amount</Text>
+            <View style={[styles.amountInputContainer, { backgroundColor: 'transparent' }]}>
               <TouchableOpacity 
-                style={styles.amountTypeButton}
+                style={[styles.amountTypeButton, { backgroundColor: colors.inputBackground }]}
                 onPress={() => {
                   if (newTransaction.amount.startsWith('-')) {
                     setNewTransaction({...newTransaction, amount: newTransaction.amount.substring(1)});
@@ -210,13 +214,18 @@ export default function TransactionsScreen() {
                   }
                 }}
               >
-                <Text style={styles.amountTypeText}>
+                <Text style={[styles.amountTypeText, { color: colors.text }]}>
                   {newTransaction.amount.startsWith('-') ? 'Expense' : 'Income'}
                 </Text>
               </TouchableOpacity>
               <TextInput
-                style={styles.amountInput}
+                style={[styles.amountInput, { 
+                  borderColor: colors.border,
+                  backgroundColor: colors.inputBackground,
+                  color: colors.text
+                }]}
                 placeholder="0.00"
+                placeholderTextColor={colors.subText}
                 keyboardType="numeric"
                 value={newTransaction.amount.startsWith('-') ? 
                   newTransaction.amount.substring(1) : newTransaction.amount}
@@ -231,19 +240,25 @@ export default function TransactionsScreen() {
               />
             </View>
             
-            <Text style={styles.inputLabel}>Category</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoriesContainer}>
+            <Text style={[styles.inputLabel, { color: colors.text }]}>Category</Text>
+            <ScrollView 
+              horizontal 
+              showsHorizontalScrollIndicator={false} 
+              style={[styles.categoriesContainer, { backgroundColor: 'transparent' }]}
+            >
               {CATEGORIES.map(category => (
                 <TouchableOpacity 
                   key={category}
                   style={[
                     styles.categoryChip,
+                    { backgroundColor: isDarkMode ? colors.inputBackground : AppColors.background },
                     newTransaction.category === category && styles.selectedCategoryChip
                   ]}
                   onPress={() => setNewTransaction({...newTransaction, category})}
                 >
                   <Text style={[
                     styles.categoryChipText,
+                    { color: isDarkMode ? colors.text : AppColors.secondary },
                     newTransaction.category === category && styles.selectedCategoryChipText
                   ]}>
                     {category}
@@ -252,20 +267,25 @@ export default function TransactionsScreen() {
               ))}
             </ScrollView>
             
-            <Text style={styles.inputLabel}>Note</Text>
+            <Text style={[styles.inputLabel, { color: colors.text }]}>Note</Text>
             <TextInput
-              style={styles.noteInput}
+              style={[styles.noteInput, { 
+                borderColor: colors.border,
+                backgroundColor: colors.inputBackground,
+                color: colors.text 
+              }]}
               placeholder="Add a note"
+              placeholderTextColor={colors.subText}
               value={newTransaction.note}
               onChangeText={(note) => setNewTransaction({...newTransaction, note})}
             />
             
-            <View style={styles.modalButtons}>
+            <View style={[styles.modalButtons, { backgroundColor: 'transparent' }]}>
               <TouchableOpacity 
-                style={[styles.modalButton, styles.cancelButton]}
+                style={[styles.modalButton, styles.cancelButton, { backgroundColor: isDarkMode ? colors.inputBackground : AppColors.background }]}
                 onPress={() => setModalVisible(false)}
               >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
+                <Text style={[styles.cancelButtonText, { color: colors.text }]}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity 
                 style={[styles.modalButton, styles.saveButton]}
@@ -309,31 +329,28 @@ function getCategoryColor(category: string): string {
 }
 
 const styles = StyleSheet.create({
+  // All your existing styles remain the same 
+  // The component styling will be provided by the inline styles we added above
   container: {
     flex: 1,
-    backgroundColor: AppColors.background,
   },
   header: {
     paddingTop: 60,
     paddingBottom: 20,
     paddingHorizontal: 20,
-    backgroundColor: AppColors.primary,
     alignItems: 'center',
   },
   balanceLabel: {
     fontSize: 16,
-    color: 'rgba(255, 255, 255, 0.8)',
     marginBottom: 5,
   },
   balanceAmount: {
     fontSize: 32,
     fontWeight: 'bold',
-    color: AppColors.white,
   },
   transactionsContainer: {
     flex: 1,
     paddingTop: 20,
-    backgroundColor: AppColors.background,
   },
   actionsRow: {
     flexDirection: 'row',
@@ -345,14 +362,12 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: AppColors.secondary,
   },
   refreshButton: {
     padding: 5,
   },
   list: {
     padding: 16,
-    backgroundColor: AppColors.background,
   },
   loadingContainer: {
     flex: 1,
@@ -387,7 +402,6 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 16,
-    color: AppColors.lightText,
   },
   transactionItem: {
     flexDirection: 'row',
@@ -395,14 +409,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 16,
     paddingHorizontal: 12,
-    backgroundColor: AppColors.white,
     borderRadius: 8,
     marginBottom: 10,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
+    ...(Platform.OS === 'web'
+      ? { 
+          boxShadow: '0px 1px 3px rgba(0, 0, 0, 0.1)',
+        }
+      : {
+          elevation: 2,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 1 },
+          shadowOpacity: 0.1,
+          shadowRadius: 2,
+        }),
   },
   transactionLeft: {
     flexDirection: 'row',
@@ -428,16 +447,13 @@ const styles = StyleSheet.create({
   transactionCategory: {
     fontSize: 16,
     fontWeight: '500',
-    color: AppColors.secondary,
   },
   transactionNote: {
     fontSize: 14,
-    color: AppColors.lightText,
     marginTop: 2,
   },
   transactionDate: {
     fontSize: 12,
-    color: '#A0A0A0',
     marginTop: 2,
   },
   transactionAmount: {
@@ -460,19 +476,24 @@ const styles = StyleSheet.create({
     backgroundColor: AppColors.primary,
     justifyContent: 'center',
     alignItems: 'center',
-    elevation: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
+    ...(Platform.OS === 'web'
+      ? { 
+          boxShadow: '0px 2px 5px rgba(0, 0, 0, 0.2)',
+        }
+      : {
+          elevation: 5,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.25,
+          shadowRadius: 3.84,
+        }),
   },
+  // Modal styles
   modalContainer: {
     flex: 1,
     justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0,0,0,0.5)',
   },
   modalContent: {
-    backgroundColor: AppColors.white,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 20,
@@ -483,14 +504,12 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginBottom: 20,
     textAlign: 'center',
-    color: AppColors.secondary,
   },
   inputLabel: {
     fontSize: 16,
     fontWeight: '500',
     marginTop: 10,
     marginBottom: 5,
-    color: AppColors.secondary,
   },
   amountInputContainer: {
     flexDirection: 'row',
@@ -498,7 +517,6 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   amountTypeButton: {
-    backgroundColor: AppColors.background,
     paddingVertical: 10,
     paddingHorizontal: 15,
     borderRadius: 5,
@@ -506,12 +524,10 @@ const styles = StyleSheet.create({
   },
   amountTypeText: {
     fontWeight: '500',
-    color: AppColors.secondary,
   },
   amountInput: {
     flex: 1,
     borderWidth: 1,
-    borderColor: '#ddd',
     borderRadius: 5,
     padding: 10,
     fontSize: 18,
@@ -523,7 +539,6 @@ const styles = StyleSheet.create({
   categoryChip: {
     paddingHorizontal: 15,
     paddingVertical: 8,
-    backgroundColor: AppColors.background,
     borderRadius: 20,
     marginRight: 8,
     marginBottom: 8,
@@ -533,14 +548,12 @@ const styles = StyleSheet.create({
   },
   categoryChipText: {
     fontSize: 14,
-    color: AppColors.secondary,
   },
   selectedCategoryChipText: {
     color: AppColors.white,
   },
   noteInput: {
     borderWidth: 1,
-    borderColor: '#ddd',
     borderRadius: 5,
     padding: 10,
     fontSize: 16,
@@ -557,7 +570,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cancelButton: {
-    backgroundColor: AppColors.background,
     marginRight: 10,
   },
   saveButton: {
@@ -566,7 +578,6 @@ const styles = StyleSheet.create({
   },
   cancelButtonText: {
     fontWeight: '500',
-    color: AppColors.secondary,
   },
   saveButtonText: {
     color: AppColors.white,
