@@ -1,37 +1,59 @@
-# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+# === Node/React/Expo Frontend ===
+frontend/node_modules/
+frontend/.expo/
+frontend/dist/
+frontend/web-build/
+frontend/expo-env.d.ts
 
-# dependencies
-node_modules/
+# Metro
+frontend/.metro-health-check*
 
-# Expo
-.expo/
-dist/
-web-build/
-expo-env.d.ts
+# Debug logs
+frontend/npm-debug.*
+frontend/yarn-debug.*
+frontend/yarn-error.*
 
-# Native
-.kotlin/
+# TypeScript
+frontend/*.tsbuildinfo
+
+# === Python Backend ===
+backend/venv/
+backend/__pycache__/
+backend/*.pyc
+backend/*.pyo
+backend/*.pyd
+backend/.Python
+backend/env/
+backend/build/
+backend/develop-eggs/
+backend/dist/
+backend/eggs/
+backend/lib/
+backend/lib64/
+backend/parts/
+backend/sdist/
+backend/var/
+backend/.pytest_cache/
+backend/.mypy_cache/
+backend/.coverage
+backend/.cache/
+backend/.venv/
+backend/*.egg-info/
+backend/*.egg
+
+# === Native Keys & Certs ===
 *.orig.*
 *.jks
 *.p8
 *.p12
 *.key
 *.mobileprovision
-
-# Metro
-.metro-health-check*
-
-# debug
-npm-debug.*
-yarn-debug.*
-yarn-error.*
-
-# macOS
-.DS_Store
 *.pem
 
-# local env files
-.env*.local
+# === macOS ===
+.DS_Store
 
-# typescript
-*.tsbuildinfo
+# === Local environment files ===
+.env
+.env*.local
+.env.local.*
