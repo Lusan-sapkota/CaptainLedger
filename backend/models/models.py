@@ -15,6 +15,11 @@ class User(db.Model):
     email_verified = db.Column(db.Boolean, default=False)
     email_verified_at = db.Column(db.DateTime, nullable=True)
     
+    # Add these new fields
+    fullName = db.Column(db.String(120), nullable=True)
+    country = db.Column(db.String(50), nullable=True, default='Nepal')
+    
+    # Existing relationships
     transactions = db.relationship('Transaction', backref='user', lazy=True)
     loans = db.relationship('Loan', backref='user', lazy=True)
     bank_accounts = db.relationship('BankAccount', backref='user', lazy=True)

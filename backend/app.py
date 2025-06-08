@@ -1,76 +1,42 @@
+import os
 from flask import Flask, jsonify
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
-import os
-from pathlib import Path
-import sys
 
-# Add the current directory to the path so imports work correctly
-sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+from models.models import db  # Assuming db is initialized in models.models
+from config.config import Config  # Import the Config class
 
-# Import your modules
-from models.models import db
+# Import blueprints
 from routes.auth import auth_bp
 from routes.transactions import transactions_bp
 from routes.sync import sync_bp
+# Add other blueprint imports if you have them (e.g., user_bp)
 
-def create_app(config=None):
-    # Remove instance_relative_config=True
+def create_app():
     app = Flask(__name__)
     
-    # Ensure the instance folder exists
-    try:
-        os.makedirs(app.instance_path, exist_ok=True)
-        print(f"Instance path: {app.instance_path}")
-    except OSError:
-        pass
+    # Load configuration from Config object
+    app.config.from_object(Config)
     
-    # Load configuration
-    if config:
-        app.config.from_mapping(config)
-    else:
-        # Use absolute path to config file
-        config_path = os.path.join(os.path.dirname(__file__), 'config', 'config.py')
-        print(f"Loading config from: {config_path}")
-        app.config.from_pyfile(config_path)
+    CORS(app, resources={r"/api/*": {"origins": "*"}})  # Enable CORS
     
-    # Print database URI to verify
-    print(f"Database URI: {app.config.get('SQLALCHEMY_DATABASE_URI')}")
-    
-    # Initialize extensions
-    CORS(app)
-    JWTManager(app)
-    db.init_app(app)
-    
+    db.init_app(app)  # Initialize SQLAlchemy
+    JWTManager(app)  # Initialize JWTManager AFTER config is loaded
+
     # Register blueprints
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(transactions_bp, url_prefix='/api/transactions')
     app.register_blueprint(sync_bp, url_prefix='/api/sync')
-    
-    # Basic route
-    @app.route('/')
-    def home():
-        return jsonify({"message": "Welcome to Captain Ledger API"})
-    
-    # Error handlers
-    @app.errorhandler(404)
-    def not_found(e):
-        return jsonify({"error": "Not found"}), 404
-    
-    @app.errorhandler(500)
-    def server_error(e):
-        return jsonify({"error": "Server error"}), 500
-    
-    # Create tables
-    with app.app_context():
-        try:
-            db.create_all()
-            print("Tables created successfully")
-        except Exception as e:
-            print(f"Error creating tables: {e}")
-    
+    # Register other blueprints...
+
+    # A simple status endpoint
+    @app.route('/api/status', methods=['GET'])
+    def status():
+        return jsonify({'status': 'Backend is running'}), 200
+        
     return app
 
 if __name__ == '__main__':
     app = create_app()
+    print(f"Flask app running with JWT_SECRET_KEY starting with: {app.config.get('JWT_SECRET_KEY')[:10]}...")  # For verification
     app.run(debug=True, host='0.0.0.0', port=5000)

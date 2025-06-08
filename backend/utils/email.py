@@ -7,10 +7,10 @@ from flask import current_app
 
 class EmailService:
     def __init__(self):
-        self.smtp_server = os.environ.get('SMTP_SERVER', 'smtp.gmail.com')
+        self.smtp_server = os.environ.get('SMTP_SERVER')
         self.smtp_port = int(os.environ.get('SMTP_PORT', 587))
-        self.sender_email = os.environ.get('SENDER_EMAIL', '')
-        self.sender_password = os.environ.get('SENDER_PASSWORD', '')
+        self.sender_email = os.environ.get('SENDER_EMAIL')
+        self.sender_password = os.environ.get('SENDER_PASSWORD')
         
     def _send_email(self, recipient, subject, html_content, text_content=""):
         """Send an email with both HTML and plain text versions."""

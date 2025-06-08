@@ -91,12 +91,18 @@ def profile():
     if not user:
         return jsonify({'error': 'User not found'}), 404
     
-    return jsonify({
+    # Get additional profile info from user if available
+    # or provide default values for compatibility with frontend
+    user_data = {
         'id': user.id,
         'email': user.email,
         'created_at': user.created_at,
-        'last_sync': user.last_sync
-    })
+        'last_sync': user.last_sync,
+        'fullName': getattr(user, 'fullName', None) or user.email.split('@')[0],
+        'country': getattr(user, 'country', 'Nepal')  # Default value
+    }
+    
+    return jsonify(user_data)
 
 @auth_bp.route('/verify-otp', methods=['POST'])
 def verify_otp():

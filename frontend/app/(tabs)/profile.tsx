@@ -88,25 +88,45 @@ export default function ProfileScreen() {
         {
           text: 'Logout',
           onPress: async () => {
-            // Add logout to login history
             try {
-              const loginHistory = await AsyncStorage.getItem('login_history') || '[]';
-              const history = JSON.parse(loginHistory);
-              history.push({
-                date: new Date().toISOString(),
-                device: Platform.OS,
-                type: 'logout'
-              });
-              await AsyncStorage.setItem('login_history', JSON.stringify(history.slice(-10)));
-            } catch (e) {
-              console.error('Error logging logout:', e);
+              // Add logout to login history
+              try {
+                const loginHistory = await AsyncStorage.getItem('login_history') || '[]';
+                const history = JSON.parse(loginHistory);
+                history.push({
+                  date: new Date().toISOString(),
+                  device: Platform.OS,
+                  type: 'logout'
+                });
+                await AsyncStorage.setItem('login_history', JSON.stringify(history.slice(-10)));
+              } catch (e) {
+                console.error('Error logging logout:', e);
+              }
+              
+              // Clear ALL auth-related items (make sure to include every possible auth key)
+              const keysToRemove = [
+                'auth_token',
+                'user_id',
+                'user_email',
+                'user_fullName',
+                'user_country',
+                'is_authenticated',
+                'is_offline_mode',
+                'is_guest_mode',
+                'completed_onboarding'
+              ];
+              
+              await Promise.all(keysToRemove.map(key => AsyncStorage.removeItem(key)));
+              console.log('All auth data cleared');
+              
+              // Add a small delay to ensure AsyncStorage is updated
+              setTimeout(() => {
+                router.replace('/auth');
+              }, 300);
+            } catch (error) {
+              console.error('Logout error:', error);
+              Alert.alert('Logout Error', 'Failed to logout. Please try again.');
             }
-            
-            // Clear auth data
-            await AsyncStorage.removeItem('auth_token');
-            await AsyncStorage.removeItem('user_id');
-            await AsyncStorage.removeItem('user_email');
-            router.replace('/auth');
           }
         }
       ]

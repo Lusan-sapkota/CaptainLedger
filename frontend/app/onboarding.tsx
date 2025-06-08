@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { StyleSheet, View, FlatList, Dimensions, TouchableOpacity, Image, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Text } from '@/components/Themed';
@@ -44,6 +44,40 @@ export default function OnboardingScreen() {
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const flatListRef = useRef<FlatList>(null);
   const router = useRouter();
+  const [isInitialized, setIsInitialized] = useState(false);
+  const [isNavigating, setIsNavigating] = useState(false);
+
+  // On component mount, set flag to prevent redirect loop
+  useEffect(() => {
+    const initializeOnboarding = async () => {
+      try {
+        console.log('Onboarding screen mounted');
+        // Set completed_onboarding to false explicitly to prevent loops
+        await AsyncStorage.removeItem('completed_onboarding');
+        // Set in-progress flag
+        await AsyncStorage.setItem('onboarding_in_progress', 'true');
+        
+        // For Android, we'll do a pre-check to make sure our flags are set
+        if (Platform.OS === 'android') {
+          // Verify our flags were set correctly
+          const inProgress = await AsyncStorage.getItem('onboarding_in_progress');
+          console.log('Verified onboarding_in_progress set to:', inProgress);
+        }
+        
+        setIsInitialized(true);
+      } catch (err) {
+        console.error('Failed to initialize onboarding:', err);
+        // Force initialization to prevent permanent loading screen
+        setIsInitialized(true);
+      }
+    };
+
+    initializeOnboarding();
+    
+    return () => {
+      console.log('Onboarding screen unmounting');
+    };
+  }, []);
   
   const handleNext = () => {
     if (currentSlideIndex < slides.length - 1) {
@@ -60,13 +94,55 @@ export default function OnboardingScreen() {
   };
   
   const handleDone = async () => {
+    if (isNavigating) return;
+    setIsNavigating(true);
+    
     try {
-      await AsyncStorage.setItem('completed_onboarding', 'true');
-      router.replace('/auth');
+      console.log('Saving onboarding completed status...');
+      
+      // For Android, use a different approach to ensure flags are set
+      if (Platform.OS === 'android') {
+        // First remove in-progress flag
+        await AsyncStorage.removeItem('onboarding_in_progress');
+        // Wait a moment to ensure the operation completes
+        await new Promise(resolve => setTimeout(resolve, 100));
+        // Then set completed flag
+        await AsyncStorage.setItem('completed_onboarding', 'true');
+        // Verify it was set
+        const completed = await AsyncStorage.getItem('completed_onboarding');
+        console.log('Verified completed_onboarding set to:', completed);
+      } else {
+        await AsyncStorage.setItem('completed_onboarding', 'true');
+        await AsyncStorage.removeItem('onboarding_in_progress');
+      }
+      
+      console.log('Navigating to auth screen...');
+      
+      // Use setTimeout to ensure navigation happens after state updates
+      setTimeout(() => {
+        router.replace('/auth');
+      }, 100);
     } catch (err) {
       console.error('Error saving onboarding state:', err);
+      
+      // Force navigation even if there was an error
+      setTimeout(() => {
+        router.replace('/auth');
+      }, 100);
     }
   };
+
+  // Only render content when initialized to prevent flash
+  if (!isInitialized) {
+    return (
+      <View style={styles.container}>
+        <StatusBar style="light" />
+        <View style={{flex: 1, justifyContent: 'center', alignItems: 'center'}}>
+          <Text style={{color: 'white', fontSize: 18}}>Loading...</Text>
+        </View>
+      </View>
+    );
+  }
   
   const renderSlide = ({ item }: { item: (typeof slides)[0] }) => {
     return (
