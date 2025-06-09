@@ -15,9 +15,21 @@ class User(db.Model):
     email_verified = db.Column(db.Boolean, default=False)
     email_verified_at = db.Column(db.DateTime, nullable=True)
     
-    # Add these new fields
+    # Profile fields
     fullName = db.Column(db.String(120), nullable=True)
     country = db.Column(db.String(50), nullable=True, default='Nepal')
+    gender = db.Column(db.String(20), nullable=True)
+    profile_picture = db.Column(db.String(255), nullable=True)
+    phone_number = db.Column(db.String(20), nullable=True)
+    bio = db.Column(db.Text, nullable=True)
+    
+    # Authentication fields
+    last_login = db.Column(db.DateTime, nullable=True)
+    last_login_ip = db.Column(db.String(50), nullable=True)
+    last_login_device = db.Column(db.String(255), nullable=True)
+    last_login_location = db.Column(db.String(255), nullable=True)
+    is_active = db.Column(db.Boolean, default=True)
+    is_verified = db.Column(db.Boolean, default=False)
     
     # Existing relationships
     transactions = db.relationship('Transaction', backref='user', lazy=True)

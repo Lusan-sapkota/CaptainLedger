@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, FlatList, TouchableOpacity, Alert, View as RNView } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { StyleSheet, FlatList, TouchableOpacity, Alert, View as RNView, RefreshControl } from 'react-native';
 import { Stack } from 'expo-router';
 import { Text, View } from '@/components/Themed';
 import { AppColors } from './(tabs)/_layout';
@@ -18,10 +18,13 @@ type Notification = {
 export default function NotificationsScreen() {
   const { isDarkMode, colors } = useTheme();
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  // Add refreshing state
+  const [refreshing, setRefreshing] = useState(false);
   
-  useEffect(() => {
+  // Define fetchNotifications function to reuse in both initial load and refresh
+  const fetchNotifications = (): Notification[] => {
     // Mock notifications data - in a real app, this would come from an API
-    setNotifications([
+    return [
       {
         id: '1',
         title: 'New Transaction Added',
@@ -54,9 +57,36 @@ export default function NotificationsScreen() {
         read: true,
         type: 'system'
       }
-    ]);
+    ];
+  };
+  
+  // Initial load
+  useEffect(() => {
+    setNotifications(fetchNotifications());
   }, []);
   
+  // Add onRefresh callback
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    
+    // Simulate API call delay
+    setTimeout(() => {
+      // In a real app, you would fetch fresh data from an API
+      // For now, we'll just add a new notification at the top
+      const newNotification = {
+        id: Date.now().toString(), // Unique ID
+        title: 'Refreshed Content',
+        message: 'You just refreshed your notifications list!',
+        date: new Date().toISOString(),
+        read: false,
+        type: 'system' as 'system' // TypeScript needs this cast
+      };
+      
+      setNotifications([newNotification, ...fetchNotifications()]);
+      setRefreshing(false);
+    }, 1500);
+  }, []);
+
   const markAsRead = (id: string) => {
     setNotifications(prev => 
       prev.map(notification => 
@@ -99,7 +129,7 @@ export default function NotificationsScreen() {
       case 'alert': return AppColors.danger;
       case 'reminder': return '#3498DB';
       case 'system': return AppColors.secondary;
-      default: return AppColors.lightGreen;
+      default: return AppColors.primary;
     }
   };
   
@@ -187,6 +217,16 @@ export default function NotificationsScreen() {
             renderItem={renderNotification}
             keyExtractor={item => item.id}
             contentContainerStyle={styles.list}
+            refreshControl={
+              <RefreshControl 
+                refreshing={refreshing} 
+                onRefresh={onRefresh}
+                colors={[AppColors.primary]}
+                tintColor={isDarkMode ? AppColors.primary : AppColors.secondary}
+                title="Pull to refresh"
+                titleColor={isDarkMode ? AppColors.primary : AppColors.secondary}
+              />
+            }
           />
         </>
       )}

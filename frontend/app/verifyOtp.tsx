@@ -6,6 +6,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '@/components/ThemeProvider';
 import { AppColors } from './(tabs)/_layout';
+import { verifyOtp, resendOtp } from '@/services/api';
 
 export default function VerifyOtpScreen() {
   const { isDarkMode, colors } = useTheme();
@@ -20,6 +21,26 @@ export default function VerifyOtpScreen() {
   const [timer, setTimer] = useState(30);
   const [canResend, setCanResend] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  // Add email editing state
+  const [isEditingEmail, setIsEditingEmail] = useState(false);
+  const [editedEmail, setEditedEmail] = useState(email as string);
+
+  // Make sure this is set up correctly
+  const [userEmail, setUserEmail] = useState<string>(email as string || '');
+
+  useEffect(() => {
+    // If email not provided through params, check AsyncStorage
+    if (!userEmail) {
+      AsyncStorage.getItem('pending_verification_email').then((storedEmail) => {
+        if (storedEmail) {
+          setUserEmail(storedEmail);
+        }
+      });
+    }
+  }, []);
 
   useEffect(() => {
     let interval: number;
@@ -66,61 +87,70 @@ export default function VerifyOtpScreen() {
   };
 
   const handleVerifyOtp = async () => {
-    const otpValue = otp.join('');
-    
-    if (otpValue.length !== 6) {
-      setError('Please enter all 6 digits of the verification code');
+    if (otp.length !== 6) {
+      setError('Please enter a valid 6-digit OTP');
       return;
     }
-
+    
     setLoading(true);
     setError('');
-
+    
     try {
-      // Here you would call your API to verify the OTP
-      // const response = await verifyOtp(email, otpValue);
-
-      // For now, simulate a successful response (using '123456' as valid OTP)
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      const response = await verifyOtp(email as string, otp.join(''));
       
-      if (otpValue === '123456') {
-        // Store verification status
-        await AsyncStorage.setItem('email_verified', 'true');
-        
-        // Navigate to profile setup
-        router.push({
-          pathname: '/profileSetup',
-          params: { email: email as string }
-        });
-      } else {
-        setError('Invalid verification code. Please try again.');
+      // Save auth data
+      await AsyncStorage.setItem('auth_token', response.token);
+      await AsyncStorage.setItem('user_id', response.user.id);
+      await AsyncStorage.setItem('user_email', response.user.email);
+      await AsyncStorage.setItem('user_fullName', response.user.full_name);
+      await AsyncStorage.setItem('user_country', response.user.country);
+      await AsyncStorage.setItem('is_authenticated', 'true');
+      
+      // Navigate to profile setup
+      router.replace({
+        pathname: '/profileSetup',
+        params: { email: response.user.email }
+      });
+      
+    } catch (error: any) {
+      console.error('OTP verification error:', error);
+      
+      let errorMessage = 'Invalid or expired OTP. Please try again.';
+      if (error.response && error.response.data && error.response.data.error) {
+        errorMessage = error.response.data.error;
       }
-    } catch (err) {
-      setError('Failed to verify code. Please try again.');
-      console.error('OTP verification error:', err);
+      
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
   };
 
   const handleResendOtp = async () => {
-    if (!canResend) return;
+    if (resendCooldown > 0) return;
     
-    setCanResend(false);
-    setTimer(30);
+    setResendLoading(true);
     
     try {
-      // Here you would call your API to resend the OTP
-      // await resendOtp(email);
+      await resendOtp(email as string);
+      setResendCooldown(60); // 60 seconds cooldown
       
-      // For demo, just simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Start countdown
+      const interval = setInterval(() => {
+        setResendCooldown((prev) => {
+          if (prev <= 1) {
+            clearInterval(interval);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
       
-      // Show success message
-      setError('');
-      // Could show a success toast here
-    } catch (err) {
-      setError('Failed to resend code. Please try again.');
+    } catch (error: any) {
+      console.error('Resend OTP error:', error);
+      setError('Failed to resend OTP. Please try again.');
+    } finally {
+      setResendLoading(false);
     }
   };
 
@@ -153,6 +183,49 @@ export default function VerifyOtpScreen() {
       <Text style={[styles.subtitle, { color: colors.subText }]}>
         A 6-digit code has been sent to {email}
       </Text>
+
+      {/* Email display and edit section */}
+      {!isEditingEmail ? (
+        <View style={styles.emailContainer}>
+          <Text style={[styles.emailText, { color: colors.text }]}>{email}</Text>
+          <TouchableOpacity 
+            style={styles.editButton} 
+            onPress={() => setIsEditingEmail(true)}
+          >
+            <FontAwesome name="pencil" size={16} color={AppColors.primary} />
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <View style={styles.emailEditContainer}>
+          <TextInput
+            style={[styles.emailInput, { 
+              backgroundColor: isDarkMode ? colors.inputBackground : '#F8F9FA',
+              color: colors.text,
+              borderColor: isDarkMode ? 'rgba(255,255,255,0.15)' : '#DFE2E6'
+            }]}
+            value={editedEmail}
+            onChangeText={setEditedEmail}
+            keyboardType="email-address"
+            autoCapitalize="none"
+          />
+          <TouchableOpacity 
+            style={styles.saveButton} 
+            onPress={async () => {
+              if (editedEmail && editedEmail !== email) {
+                // User changed email - navigate back to signup with new email
+                router.replace({
+                  pathname: '/auth',
+                  params: { initialEmail: editedEmail }
+                });
+              } else {
+                setIsEditingEmail(false);
+              }
+            }}
+          >
+            <Text style={styles.saveButtonText}>Update</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       <View style={styles.otpContainer}>
         {[0, 1, 2, 3, 4, 5].map((index) => (
@@ -202,13 +275,6 @@ export default function VerifyOtpScreen() {
           </Text>
         )}
       </View>
-
-      <TouchableOpacity
-        style={styles.skipButton}
-        onPress={() => router.push('/profileSetup')}
-      >
-        <Text style={styles.skipButtonText}>Skip for now</Text>
-      </TouchableOpacity>
     </ScrollView>
   );
 }
@@ -251,6 +317,42 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginBottom: 30,
     textAlign: 'center',
+  },
+  emailContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  emailText: {
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  editButton: {
+    marginLeft: 10,
+    padding: 5,
+  },
+  emailEditContainer: {
+    width: '100%',
+    marginBottom: 20,
+  },
+  emailInput: {
+    width: '100%',
+    height: 45,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    marginBottom: 10,
+  },
+  saveButton: {
+    backgroundColor: AppColors.primary,
+    paddingVertical: 10,
+    paddingHorizontal: 15,
+    borderRadius: 5,
+    alignSelf: 'flex-end',
+  },
+  saveButtonText: {
+    color: 'white',
+    fontWeight: '500',
   },
   otpContainer: {
     flexDirection: 'row',

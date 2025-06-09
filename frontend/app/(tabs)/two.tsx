@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { StyleSheet, FlatList, TouchableOpacity, TextInput, Modal, ScrollView, ActivityIndicator, Platform } from 'react-native';
+import { useState, useEffect, useCallback } from 'react';
+import { StyleSheet, FlatList, TouchableOpacity, TextInput, Modal, ScrollView, ActivityIndicator, Platform, RefreshControl } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 
@@ -21,6 +21,7 @@ export default function TransactionsScreen() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { isDarkMode, colors } = useTheme();
   
@@ -43,10 +44,16 @@ export default function TransactionsScreen() {
     loadTransactions();
   }, []);
 
-  const loadTransactions = async () => {
-    try {
+  const loadTransactions = async (isRefreshing = false) => {
+    if (isRefreshing) {
+      setRefreshing(true);
+    } else {
       setLoading(true);
-      setError(null);
+    }
+    
+    setError(null);
+    
+    try {
       const response = await getTransactions();
       setTransactions(response.data.transactions);
     } catch (err) {
@@ -63,8 +70,14 @@ export default function TransactionsScreen() {
       ]);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
+  
+  // Create an onRefresh handler
+  const onRefresh = useCallback(() => {
+    loadTransactions(true);
+  }, []);
 
   const handleAddTransaction = async () => {
     if (!newTransaction.amount) return;
@@ -152,19 +165,19 @@ export default function TransactionsScreen() {
       <View style={[styles.transactionsContainer, { backgroundColor: colors.background }]}>
         <View style={[styles.actionsRow, { backgroundColor: 'transparent' }]}>
           <Text style={[styles.sectionTitle, { color: colors.text }]}>Transactions</Text>
-          <TouchableOpacity onPress={loadTransactions} style={styles.refreshButton}>
+          <TouchableOpacity onPress={() => loadTransactions()} style={styles.refreshButton}>
             <FontAwesome name="refresh" size={20} color={AppColors.primary} />
           </TouchableOpacity>
         </View>
         
-        {loading ? (
+        {loading && !refreshing ? (
           <View style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
             <ActivityIndicator size="large" color={AppColors.primary} />
           </View>
         ) : error ? (
           <View style={[styles.errorContainer, { backgroundColor: colors.background }]}>
             <Text style={styles.errorText}>{error}</Text>
-            <TouchableOpacity style={styles.retryButton} onPress={loadTransactions}>
+            <TouchableOpacity style={styles.retryButton} onPress={() => loadTransactions()}>
               <Text style={styles.retryButtonText}>Retry</Text>
             </TouchableOpacity>
           </View>
@@ -174,6 +187,16 @@ export default function TransactionsScreen() {
             renderItem={renderTransactionItem}
             keyExtractor={item => item.id}
             contentContainerStyle={[styles.list, { backgroundColor: colors.background }]}
+            refreshControl={
+              <RefreshControl 
+                refreshing={refreshing} 
+                onRefresh={onRefresh}
+                colors={[AppColors.primary]}
+                tintColor={isDarkMode ? AppColors.primary : AppColors.secondary}
+                title="Pull to refresh"
+                titleColor={isDarkMode ? AppColors.primary : AppColors.secondary}
+              />
+            }
             ListEmptyComponent={
               <View style={[styles.emptyContainer, { backgroundColor: colors.background }]}>
                 <Text style={[styles.emptyText, { color: colors.subText }]}>No transactions found</Text>

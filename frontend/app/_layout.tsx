@@ -6,6 +6,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import React, { useEffect, useState } from 'react';
 import 'react-native-reanimated';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Alert, Text } from 'react-native';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import { ThemeProvider } from '@/components/ThemeProvider';
@@ -70,144 +71,100 @@ function RootLayoutNav() {
   // Authentication state
   const [authState, setAuthState] = useState<AuthState>(initialAuthState);
   const [checkedOnboarding, setCheckedOnboarding] = useState(false);
-  // Add this flag to prevent multiple redirects
   const [hasRedirectedToOnboarding, setHasRedirectedToOnboarding] = useState(false);
   
-  // MOVE THIS REF TO THE COMPONENT LEVEL - not inside useEffect
+  // Add a trigger to force auth re-check
+  const [authCheckTrigger, setAuthCheckTrigger] = useState(0);
+  
   const isCurrentlyNavigating = React.useRef(false);
 
-  useEffect(() => {
-    let isActive = true; // To handle component unmounting
-    let timeoutId: ReturnType<typeof setTimeout>;
-
-    const checkAuthState = async () => {
-      try {
-        console.log('Starting auth state check...');
+  // Move checkAuthState function outside useEffect so it can be called from logout
+  const checkAuthState = React.useCallback(async () => {
+    try {
+      console.log('=== CHECKING AUTH STATE ===');
+      
+      // Check if explicitly logged out - this should override everything
+      const userLoggedOut = await AsyncStorage.getItem('user_logged_out');
+      if (userLoggedOut === 'true') {
+        console.log('User explicitly logged out');
+        await AsyncStorage.removeItem('user_logged_out');
         
-        // Set platform-specific timeout
-        const timeoutDuration = Platform.OS === 'android' ? 8000 : 5000;
-        
-        timeoutId = setTimeout(() => {
-          if (isActive && authState.isLoading) {
-            console.log('Authentication check timed out');
-            
-            // For Android, just enable offline mode automatically
-            if (Platform.OS === 'android') {
-              handleOfflineMode();
-            } else {
-              setAuthState({
-                isAuthenticated: false,
-                isLoading: false,
-                user: null
-              });
-              setCheckedOnboarding(true);
-            }
-          }
-        }, timeoutDuration);
-        
-        // Add this helper function
-        const handleOfflineMode = async () => {
-          console.log('Setting up offline mode for Android');
-          await AsyncStorage.setItem('auth_token', 'offline-token');
-          await AsyncStorage.setItem('user_id', 'offline');
-          await AsyncStorage.setItem('user_email', 'offline@example.com');
-          await AsyncStorage.setItem('is_offline_mode', 'true');
-                
-          setAuthState({
-            isAuthenticated: true,
-            isLoading: false,
-            user: { id: 'offline', email: 'offline@example.com' }
-          });
-          setCheckedOnboarding(true);
-        };
-
-        // Check if onboarding is in progress to prevent redirection loops
-        const onboardingInProgress = await AsyncStorage.getItem('onboarding_in_progress');
-        if (onboardingInProgress === 'true') {
-          console.log('Onboarding is in progress, skipping redirect');
-          clearTimeout(timeoutId);
-          setAuthState({
-            isAuthenticated: false,
-            isLoading: false,
-            user: null
-          });
-          setCheckedOnboarding(true);
-          return;
-        }
-
-        // Get data from AsyncStorage
-        const [token, userId, email, hasCompletedOnboarding, isAuthenticated] = await Promise.all([
-          AsyncStorage.getItem('auth_token'),
-          AsyncStorage.getItem('user_id'),
-          AsyncStorage.getItem('user_email'),
-          AsyncStorage.getItem('completed_onboarding'),
-          AsyncStorage.getItem('is_authenticated')
-        ]);
-        
-        // Clear timeout since we got a response
-        clearTimeout(timeoutId);
-        
-        // Update state only if component is still mounted
-        if (!isActive) return;
-        
+        // Instead of calling multiRemove here which might fail,
+        // just update the auth state directly for speed
+        setAuthState({
+          isAuthenticated: false,
+          isLoading: false,
+          user: null
+        });
         setCheckedOnboarding(true);
-        
-        // Check if the user is authenticated based on explicit flag or token
-        if ((token && userId && email) || isAuthenticated === 'true') {
-          console.log('User is authenticated, setting auth state');
-          setAuthState({
-            isAuthenticated: true,
-            isLoading: false,
-            user: { id: userId || 'user', email: email || 'user@example.com' }
-          });
-        } else {
-          // For Android, if we're having network issues, set up guest mode
-          if (Platform.OS === 'android') {
-            console.log('Setting up guest mode for Android');
-            // Set up guest credentials
-            await AsyncStorage.setItem('auth_token', 'guest-token');
-            await AsyncStorage.setItem('user_id', 'guest');
-            await AsyncStorage.setItem('user_email', 'guest@example.com');
-            await AsyncStorage.setItem('is_guest_mode', 'true');
-            
-            setAuthState({
-              isAuthenticated: true,
-              isLoading: false,
-              user: { id: 'guest', email: 'guest@example.com' }
-            });
-          } else {
-            setAuthState({
-              isAuthenticated: false,
-              isLoading: false,
-              user: null
-            });
-          }
-        }
-      } catch (error) {
-        console.error('Failed to check auth state:', error);
-        // Ensure we don't get stuck in loading state
-        if (isActive) {
-          setCheckedOnboarding(true);
-          setAuthState({
-            isAuthenticated: false,
-            isLoading: false,
-            user: null
-          });
-        }
+        return;
       }
-    };
+      
+      // Get auth token - most important item
+      const authToken = await AsyncStorage.getItem('auth_token');
+      const isAuthenticated = await AsyncStorage.getItem('is_authenticated');
+      
+      // Basic check - if no token and no authenticated flag, don't proceed with complex checks
+      if (!authToken && isAuthenticated !== 'true') {
+        console.log('No auth token and not authenticated - clear state');
+        setAuthState({
+          isAuthenticated: false,
+          isLoading: false,
+          user: null
+        });
+        setCheckedOnboarding(true);
+        return;
+      }
+      
+      // More robust check for valid auth
+      const isValidToken = Boolean(
+        (authToken && authToken !== 'null' && authToken !== 'undefined') ||
+        authToken === 'offline-token' ||
+        authToken === 'guest-token'
+      );
+      
+      const isExplicitlyAuthenticated = isAuthenticated === 'true';
+      const hasValidAuth = isValidToken || isExplicitlyAuthenticated;
+      
+      console.log('Has valid auth?', hasValidAuth, { isValidToken, isExplicitlyAuthenticated });
+      
+      if (hasValidAuth) {
+        const userId = await AsyncStorage.getItem('user_id');
+        const email = await AsyncStorage.getItem('user_email');
+        
+        setAuthState({
+          isAuthenticated: true,
+          isLoading: false,
+          user: { 
+            id: userId || 'user', 
+            email: email || 'user@example.com' 
+          }
+        });
+      } else {
+        setAuthState({
+          isAuthenticated: false,
+          isLoading: false,
+          user: null
+        });
+      }
+      
+      setCheckedOnboarding(true);
+    } catch (error) {
+      console.error('Failed to check auth state:', error);
+      setAuthState({
+        isAuthenticated: false,
+        isLoading: false,
+        user: null
+      });
+      setCheckedOnboarding(true);
+    }
+  }, []);
 
-    // Only run auth check if we haven't already redirected to onboarding
+  useEffect(() => {
     if (!hasRedirectedToOnboarding) {
       checkAuthState();
     }
-    
-    // Cleanup function
-    return () => {
-      isActive = false;
-      clearTimeout(timeoutId);
-    };
-  }, [hasRedirectedToOnboarding]); // Add hasRedirectedToOnboarding as a dependency
+  }, [hasRedirectedToOnboarding, authCheckTrigger, checkAuthState]);
 
   useEffect(() => {
     console.log('Auth state changed:', {
@@ -225,11 +182,13 @@ function RootLayoutNav() {
     const inAuthGroup = segments[0] === 'auth';
     const inOnboardingGroup = segments[0] === 'onboarding';
     
-    // Add these unprotected routes
+    // Update this list to include profileSetup
     const isUnprotectedRoute = 
       segments[0] === 'terms' || 
       segments[0] === 'privacy' || 
-      segments[0] === 'documentation';
+      segments[0] === 'documentation' ||
+      segments[0] === 'verifyOtp' || 
+      segments[0] === 'profileSetup';  // Add this line
 
     // IMPORTANT: Use the ref created at component level, not locally
     if (!isCurrentlyNavigating.current) {
@@ -265,6 +224,76 @@ function RootLayoutNav() {
     }
   }, [authState.isAuthenticated, authState.isLoading, segments, checkedOnboarding]);
 
+  const handleLogout = async () => {
+    Alert.alert(
+      'Logout',
+      'Are you sure you want to logout?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel'
+        },
+        {
+          text: 'Logout',
+          onPress: async () => {
+            try {
+              console.log('=== LOGOUT START ===');
+              
+              // Set logout flag before clearing storage
+              await AsyncStorage.setItem('user_logged_out', 'true');
+              
+              // Clear ALL auth-related items
+              const keysToRemove = [
+                'auth_token',
+                'user_id',
+                'user_email',
+                'user_fullName',
+                'user_country',
+                'is_authenticated',
+                'is_offline_mode',
+                'is_guest_mode',
+                'completed_onboarding',
+                'profile_setup_completed',
+                'user_displayName',
+                'user_avatar',
+                'user_bio',
+                'user_phone'
+              ];
+              
+              // Clear all keys sequentially
+              for (const key of keysToRemove) {
+                await AsyncStorage.removeItem(key);
+              }
+              
+              console.log('All auth data cleared');
+              
+              // Force auth state re-check
+              setAuthState({
+                isAuthenticated: false,
+                isLoading: false,
+                user: null
+              });
+              
+              // Trigger auth check to ensure state is updated
+              setAuthCheckTrigger(prev => prev + 1);
+              
+              console.log('=== LOGOUT END ===');
+              
+              // Navigate to auth
+              setTimeout(() => {
+                router.replace('/auth');
+              }, 100);
+              
+            } catch (error) {
+              console.error('Logout error:', error);
+              Alert.alert('Logout Error', 'Failed to logout. Please try again.');
+            }
+          }
+        }
+      ]
+    );
+  };
+
   if (authState.isLoading) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
@@ -289,6 +318,8 @@ function RootLayoutNav() {
           <Stack.Screen name="forgotPassword" options={{ headerShown: false }} />
           <Stack.Screen name="verifyOtp" options={{ headerShown: false, gestureEnabled: false }} />
           <Stack.Screen name="profileSetup" options={{ headerShown: false, gestureEnabled: false }} />
+          <Stack.Screen name="editProfile" options={{ headerShown: false }} />
+          <Stack.Screen name="changePassword" options={{ headerShown: false }} />
         </Stack>
       </NavigationThemeProvider>
     </ThemeProvider>

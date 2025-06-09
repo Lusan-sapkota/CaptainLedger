@@ -19,7 +19,7 @@ const COUNTRIES = [
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Password must be at least 8 characters with at least 1 number
-// const PASSWORD_REGEX = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{8,}$/;
+// const PASSWORD_REGEX = /^(?=.*[A-Za-z])(?=.*\d)[A-ZaLz\d]{8,}$/;
 
 // Custom themed alert component
 const ThemedAlert = ({ 
@@ -103,6 +103,8 @@ export default function AuthScreen() {
     confirmPassword: '',
     fullName: '',
   });
+
+  const [statusMessage, setStatusMessage] = useState('');
 
   const validateEmail = (email: string) => {
     if (!email.trim()) return 'Email is required';
@@ -275,90 +277,144 @@ export default function AuthScreen() {
   };
 
   const handleLogin = async () => {
-    if (!validateLoginForm()) return;
+    // Check for empty fields and show themed alerts
+    if (!loginData.email.trim()) {
+      showThemedAlert('Email Required', 'Please enter your email address');
+      return;
+    }
+    
+    if (!EMAIL_REGEX.test(loginData.email)) {
+      showThemedAlert('Invalid Email', 'Please enter a valid email address');
+      return;
+    }
+    
+    if (!loginData.password) {
+      showThemedAlert('Password Required', 'Please enter your password');
+      return;
+    }
     
     setLoading(true);
+    setStatusMessage(`Authenticating ${loginData.email}...`); // Show email in status
+    
     try {
       let response;
       
       try {
+        // Show sending email message
+        setStatusMessage(`Connecting to server...`);
+        await new Promise(resolve => setTimeout(resolve, 400)); // Brief delay for visual feedback
+        
+        setStatusMessage(`Verifying credentials for ${loginData.email}...`);
         response = await login(loginData.email, loginData.password);
-      } catch (apiError) {
-        // If on Android and network error, create a mock response instead of throwing
-        if (Platform.OS === 'android') {
-          console.log('Android login fallback mode');
-          // Create and use offline credentials
-          await AsyncStorage.setItem('auth_token', 'offline-token');
-          await AsyncStorage.setItem('user_id', 'offline-user');
-          await AsyncStorage.setItem('user_email', loginData.email);
-          await AsyncStorage.setItem('is_offline_mode', 'true');
-          
-          // Log login date
-          const loginHistory = await AsyncStorage.getItem('login_history') || '[]';
-          const history = JSON.parse(loginHistory);
-          history.push({
-            date: new Date().toISOString(),
-            device: Platform.OS,
-            type: 'login'
-          });
-          await AsyncStorage.setItem('login_history', JSON.stringify(history.slice(-10)));
-          
-          // Explicit force navigation after slight delay
-          setTimeout(() => {
-            router.replace('/');
-          }, 300);
-          
-          return; // Exit early
-        } else {
-          // Re-throw the error for non-Android platforms
-          throw apiError;
+        
+        setStatusMessage(`Sending authentication session to ${loginData.email}...`);
+        await new Promise(resolve => setTimeout(resolve, 800)); // Show this message for a moment
+        
+        // Only proceed if we get a valid response with token
+        if (!response.data || !response.data.token) {
+          throw new Error('Invalid response from server');
         }
+        
+        // Store ALL required auth data in correct sequence
+        await AsyncStorage.multiSet([
+          ['auth_token', response.data.token],
+          ['user_id', response.data.user.id.toString()],
+          ['user_email', loginData.email],
+          ['is_authenticated', 'true'], // CRITICAL: Set this explicitly to 'true'
+          ['is_offline_mode', 'false'], // Set this to false to be explicit
+          ['is_guest_mode', 'false']    // Set this to false to be explicit
+        ]);
+        
+        console.log('Auth data stored successfully');
+        
+        setStatusMessage('Login successful!');
+        
+        // Add a slightly longer delay to ensure storage is complete
+        setTimeout(() => {
+          if (Platform.OS === 'web') {
+            window.location.href = '/'; // Force full page reload on web
+          } else {
+            router.replace('/');
+          }
+        }, 800); // Longer delay to ensure the user sees the success message
+      } catch (apiError: any) {
+        console.error('API Error:', apiError);
+        
+        // Check if this is an authentication error (401)
+        if (apiError.response && apiError.response.status === 401) {
+          // Show invalid credentials error using Alert for immediate visibility
+          setLoading(false);
+          setStatusMessage('');
+          
+          // Use platform-specific approach for alert
+          if (Platform.OS === 'web') {
+            showThemedAlert('Login Failed', 'Invalid email or password. Please check your credentials and try again.');
+          } else {
+            Alert.alert(
+              'Login Failed', 
+              'Invalid email or password. Please check your credentials and try again.'
+            );
+          }
+          return; // Important: Exit early to prevent further processing
+        }
+        
+        // Network errors on Android
+        if (Platform.OS === 'android' && 
+            !apiError.response && 
+            apiError.message && 
+            apiError.message.includes('Network Error')) {
+          
+          console.log('Android login fallback mode - network error only');
+          Alert.alert(
+            'Network Error',
+            'Unable to connect to server. Would you like to use offline mode?',
+            [
+              {
+                text: 'Cancel',
+                style: 'cancel',
+                onPress: () => setLoading(false)
+              },
+              {
+                text: 'Use Offline Mode',
+                onPress: async () => {
+                  // Create and use offline credentials
+                  await AsyncStorage.multiSet([
+                    ['auth_token', 'offline-token'],
+                    ['user_id', 'offline-user'],
+                    ['user_email', loginData.email],
+                    ['is_offline_mode', 'true'],
+                    ['is_authenticated', 'true']
+                  ]);
+                  
+                  router.replace('/');
+                }
+              }
+            ]
+          );
+          return;
+        }
+        
+        // Re-throw for the outer catch block
+        throw apiError;
       }
-      
-      // Regular successful login flow (when API works)
-      await AsyncStorage.setItem('auth_token', response.data.token);
-      await AsyncStorage.setItem('user_id', response.data.user.id);
-      await AsyncStorage.setItem('user_email', loginData.email);
-      
-      // Log login date
-      const loginHistory = await AsyncStorage.getItem('login_history') || '[]';
-      const history = JSON.parse(loginHistory);
-      history.push({
-        date: new Date().toISOString(),
-        device: Platform.OS,
-        type: 'login'
-      });
-      await AsyncStorage.setItem('login_history', JSON.stringify(history.slice(-10)));
-      
-      // Set an additional flag to signal successful authentication
-      await AsyncStorage.setItem('is_authenticated', 'true');
-
-      // Use replace instead of navigate to ensure full app reinitialization
-      setTimeout(() => {
-        router.replace('/');
-      }, 100);
     } catch (error) {
       console.error('Login error:', error);
       
-      let errorMessage = 'Invalid email or password. Please try again.';
-      if (
-        typeof error === 'object' &&
-        error !== null &&
-        'response' in error &&
-        typeof (error as any).response === 'object' &&
-        (error as any).response !== null &&
-        'data' in (error as any).response &&
-        typeof (error as any).response.data === 'object' &&
-        (error as any).response.data !== null &&
-        'error' in (error as any).response.data
-      ) {
+      // Simplified error handling - make sure this alert always shows
+      let errorMessage = 'Unable to login. Please try again.';
+      
+      // Simple error message extraction that's less likely to fail
+      if ((error as any)?.response?.data?.error) {
         errorMessage = (error as any).response.data.error;
       }
       
-      // Use the themed alert instead of native Alert
-      showThemedAlert('Login Failed', errorMessage);
+      // Use setTimeout to ensure alert shows even if there are other processing issues
+      setTimeout(() => {
+        showThemedAlert('Login Failed', errorMessage);
+      }, 100);
     } finally {
       setLoading(false);
+      setStatusMessage(''); // Clear status message
     }
   };
 
@@ -366,30 +422,35 @@ export default function AuthScreen() {
     if (!validateSignupForm()) return;
     
     setLoading(true);
+    setStatusMessage('Creating your account...');
+    
     try {
-      // First register with the Flask backend API
+      console.log("Starting registration for:", signupData.email);
+      
+      // Show account creation step
+      setStatusMessage('Validating your information...');
+      await new Promise(resolve => setTimeout(resolve, 500)); // Visual feedback
+      
+      setStatusMessage('Creating your account...');
+      // Registration API call...
       try {
-        const registerData = {
-          email: signupData.email,
-          password: signupData.password,
-          fullName: signupData.fullName,
-          country: signupData.country,
-          gender: signupData.gender
-        };
+        await register(
+          signupData.fullName,
+          signupData.email,
+          signupData.password,
+          signupData.country,
+          signupData.gender
+        );
         
-        const response = await register(signupData.email, signupData.password);
+        setStatusMessage('Sending verification email...');
+        await new Promise(resolve => setTimeout(resolve, 800));
         
-        // Store token from backend
-        await AsyncStorage.setItem('auth_token', response.data.token);
+        setStatusMessage('Verification email sent! Redirecting...');
+        await new Promise(resolve => setTimeout(resolve, 1000));
         
-        // Store additional user data locally
-        await AsyncStorage.setItem('user_id', response.data.user.id);
-        await AsyncStorage.setItem('user_email', signupData.email);
-        await AsyncStorage.setItem('user_fullName', signupData.fullName);
-        await AsyncStorage.setItem('user_country', signupData.country);
-        await AsyncStorage.setItem('user_gender', signupData.gender);
+        // Continue with the rest of the success handling
+        await AsyncStorage.setItem('pending_verification_email', signupData.email);
         
-        // Log signup date
         const loginHistory = await AsyncStorage.getItem('login_history') || '[]';
         const history = JSON.parse(loginHistory);
         history.push({
@@ -399,22 +460,37 @@ export default function AuthScreen() {
         });
         await AsyncStorage.setItem('login_history', JSON.stringify(history.slice(-10)));
         
-        // Navigate to OTP verification instead of the main app
+        // Show OTP email sending step
+        setStatusMessage(`Sending verification code to ${signupData.email}...`);
+        await new Promise(resolve => setTimeout(resolve, 800)); // Visual delay
+        
+        // Show success message
+        setStatusMessage(`Verification code sent to ${signupData.email}`);
+        await new Promise(resolve => setTimeout(resolve, 1200)); // Let user see message
+        
+        // Navigate to OTP verification screen
         router.push({
           pathname: '/verifyOtp',
           params: { email: signupData.email }
         });
-      } catch (error: any) {
-        console.error('Signup error:', error);
-        
-        let errorMessage = 'This email may already be registered. Please try again.';
-        if (error.response && error.response.data && error.response.data.error) {
-          errorMessage = error.response.data.error;
-        }
-        
-        // Use the themed alert
-        showThemedAlert('Signup Failed', errorMessage);
+      } catch (regError) {
+        console.error('Registration API error:', regError);
+        throw regError; // Re-throw to be caught by outer catch
       }
+    } catch (error: any) {
+      console.error('Signup error:', error);
+      
+      let errorMessage = 'This email may already be registered. Please try again.';
+      
+      if (error.message === 'Registration request timed out') {
+        errorMessage = 'The registration request timed out. Please check your connection and try again.';
+      } else if (error.code === 'ECONNABORTED') {
+        errorMessage = 'Connection to the server timed out. Please try again later.';
+      } else if (error.response && error.response.data && error.response.data.error) {
+        errorMessage = error.response.data.error;
+      }
+      
+      showThemedAlert('Signup Failed', errorMessage);
     } finally {
       setLoading(false);
     }
@@ -792,6 +868,15 @@ export default function AuthScreen() {
         )}
       </View>
       
+      {statusMessage ? (
+        <View style={[styles.statusContainer, { 
+          backgroundColor: isDarkMode ? 'rgba(39, 174, 96, 0.2)' : 'rgba(39, 174, 96, 0.1)'
+        }]}>
+          <ActivityIndicator size="small" color={AppColors.primary} />
+          <Text style={styles.statusMessage}>{statusMessage}</Text>
+        </View>
+      ) : null}
+      
       <TouchableOpacity
         style={styles.primaryButton}
         onPress={handleSignup}
@@ -1162,5 +1247,20 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: 'bold',
     fontSize: 16,
+  },
+  statusContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 10,
+    marginBottom: 10,
+  },
+  statusMessage: {
+    color: AppColors.primary,
+    fontSize: 14,
+    marginLeft: 10,
+    fontWeight: '500',
   },
 });

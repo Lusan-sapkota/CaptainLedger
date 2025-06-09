@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
-import { Link, Tabs, useRouter } from 'expo-router';
+import { Tabs, useRouter } from 'expo-router';
 import { Pressable, Text, View } from 'react-native';
 import { useTheme } from '@/components/ThemeProvider';
 import { useClientOnlyValue } from '@/components/useClientOnlyValue';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // New app colors
 export const AppColors = {
@@ -11,7 +12,6 @@ export const AppColors = {
   secondary: '#2C3E50',  // Dark Blue - Security, professionalism  
   background: '#ECF0F1', // Light Gray - Background, neutrality
   white: '#FFFFFF',      // White - Contrast, clarity
-  lightGreen: '#A9DFBF', // Light version of primary
   darkGreen: '#1E8449',  // Dark version of primary
   lightText: '#7F8C8D',  // For secondary text
   danger: '#E74C3C',     // For errors, negative amounts
@@ -57,7 +57,53 @@ export default function TabLayout() {
   const { isDarkMode, colors } = useTheme();
   const router = useRouter();
   const [notificationCount, setNotificationCount] = useState(2);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   
+  // Move this hook BEFORE any conditional returns to maintain hooks order consistency
+  const headerShownValue = useClientOnlyValue(false, true);
+
+  // Check auth state on mount
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const authToken = await AsyncStorage.getItem('auth_token');
+        const isAuthenticatedFlag = await AsyncStorage.getItem('is_authenticated');
+        
+        // More robust check
+        const isAuth = Boolean(
+          (isAuthenticatedFlag === 'true' || authToken) &&
+          authToken !== 'null' &&
+          authToken !== 'undefined' &&
+          authToken !== null &&
+          authToken !== undefined &&
+          authToken !== ''
+        );
+        
+        console.log('TabLayout - Auth check:', isAuth ? 'authenticated' : 'not authenticated');
+        console.log('TabLayout - Auth token:', authToken);
+        console.log('TabLayout - Is authenticated flag:', isAuthenticatedFlag);
+        
+        setIsAuthenticated(isAuth);
+      } catch (error) {
+        console.error('Error checking auth in TabLayout:', error);
+        setIsAuthenticated(false);
+      }
+    };
+    
+    checkAuth();
+  }, []);
+
+  // If auth state is still being determined, return null
+  if (isAuthenticated === null) {
+    return null;
+  }
+  
+  // Don't render tabs at all if not authenticated
+  if (isAuthenticated === false) {
+    console.log('TabLayout - Not authenticated, not rendering tabs');
+    return null;
+  }
+
   return (
     <Tabs
       screenOptions={{
@@ -74,7 +120,7 @@ export default function TabLayout() {
         headerTitleStyle: {
           fontWeight: 'bold',
         },
-        headerShown: useClientOnlyValue(false, true),
+        headerShown: headerShownValue, // Use the pre-calculated value
       }}>
       <Tabs.Screen
         name="index"

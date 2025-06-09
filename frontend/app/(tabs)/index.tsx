@@ -1,10 +1,11 @@
-import { StyleSheet, TouchableOpacity, Image, ScrollView, Platform } from 'react-native';
+import { StyleSheet, TouchableOpacity, Image, ScrollView, Platform, View as RNView, Animated, LayoutAnimation, UIManager, RefreshControl } from 'react-native';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { Href, useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { Text, View } from '@/components/Themed';
 import { AppColors } from './_layout';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { getUserProfile } from '@/services/api';
 import { useTheme } from '@/components/ThemeProvider';
 
@@ -39,41 +40,358 @@ const FEATURE_ITEMS = [
   },
 ];
 
+// Enable LayoutAnimation for Android
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
 export default function DashboardScreen() {
   const router = useRouter();
-  const [userProfile, setUserProfile] = useState<{email: string} | null>(null);
+  const [userProfile, setUserProfile] = useState<{email: string, displayName?: string, fullName?: string, profile_picture?: string} | null>(null);
   const [loading, setLoading] = useState(true);
   const { isDarkMode, colors } = useTheme();
+  const [showPersonalWelcome, setShowPersonalWelcome] = useState(true);
   
+  // Create animated values for transitions
+  const personalOpacity = useState(new Animated.Value(1))[0];
+  const logoOpacity = useState(new Animated.Value(0))[0];
+  
+  // Add these animated values for more effects
+  const personalScale = useState(new Animated.Value(1))[0];
+  const logoScale = useState(new Animated.Value(0.9))[0];
+  const personalY = useState(new Animated.Value(0))[0];
+  const logoY = useState(new Animated.Value(10))[0];
+  
+  // Function to get first name from full name
+  const getFirstName = (name: string) => {
+    return name?.split(' ')[0] || 'User';
+  };
+  
+  // Get display name for welcome message
+  const getDisplayName = () => {
+    // Check if user is in guest mode
+    const isGuestMode = userProfile?.email === 'guest@example.com';
+    
+    if (isGuestMode) return 'Guest';
+    if (userProfile?.displayName) return userProfile.displayName;
+    if (userProfile?.fullName) return getFirstName(userProfile.fullName);
+    return 'User';
+  };
+  
+  // Toggle welcome message every 5 seconds
   useEffect(() => {
-    const fetchUserProfile = async () => {
+    const interval = setInterval(() => {
+      // Configure nice layout animation
+      LayoutAnimation.configureNext({
+        duration: 500,
+        create: { 
+          type: LayoutAnimation.Types.easeInEaseOut,
+          property: LayoutAnimation.Properties.opacity,
+        },
+        update: { 
+          type: LayoutAnimation.Types.easeInEaseOut,
+        },
+        delete: { 
+          type: LayoutAnimation.Types.easeInEaseOut,
+          property: LayoutAnimation.Properties.opacity,
+        },
+      });
+      
+      // New enhanced sequence with spring animations
+      if (showPersonalWelcome) {
+        // Animate personal view out, logo view in
+        Animated.parallel([
+          // Fade personal out
+          Animated.timing(personalOpacity, {
+            toValue: 0,
+            duration: 350,
+            useNativeDriver: true
+          }),
+          // Move personal up slightly while fading out
+          Animated.timing(personalY, {
+            toValue: -10,
+            duration: 400,
+            useNativeDriver: true
+          }),
+          // Scale personal down slightly
+          Animated.timing(personalScale, {
+            toValue: 0.9,
+            duration: 400,
+            useNativeDriver: true
+          }),
+          // Fade logo in
+          Animated.spring(logoOpacity, {
+            toValue: 1,
+            friction: 8, // Lower = more bouncy
+            tension: 50, // Strength
+            useNativeDriver: true
+          }),
+          // Move logo up from bottom
+          Animated.spring(logoY, {
+            toValue: 0,
+            friction: 8,
+            tension: 50,
+            useNativeDriver: true
+          }),
+          // Scale logo up
+          Animated.spring(logoScale, {
+            toValue: 1,
+            friction: 8,
+            tension: 50,
+            useNativeDriver: true
+          })
+        ]).start();
+      } else {
+        // Animate logo view out, personal view in
+        Animated.parallel([
+          // Fade logo out
+          Animated.timing(logoOpacity, {
+            toValue: 0,
+            duration: 350,
+            useNativeDriver: true
+          }),
+          // Move logo up slightly while fading out
+          Animated.timing(logoY, {
+            toValue: -10,
+            duration: 400,
+            useNativeDriver: true
+          }),
+          // Scale logo down slightly
+          Animated.timing(logoScale, {
+            toValue: 0.9,
+            duration: 400,
+            useNativeDriver: true
+          }),
+          // Fade personal in with spring
+          Animated.spring(personalOpacity, {
+            toValue: 1,
+            friction: 8,
+            tension: 50,
+            useNativeDriver: true
+          }),
+          // Move personal up from bottom
+          Animated.spring(personalY, {
+            toValue: 0,
+            friction: 8,
+            tension: 50,
+            useNativeDriver: true
+          }),
+          // Scale personal up
+          Animated.spring(personalScale, {
+            toValue: 1,
+            friction: 8,
+            tension: 50,
+            useNativeDriver: true
+          })
+        ]).start();
+      }
+      
+      setShowPersonalWelcome(prev => !prev);
+    }, 5000);
+    
+    return () => clearInterval(interval);
+  }, [showPersonalWelcome, personalOpacity, logoOpacity, personalScale, logoScale, personalY, logoY]);
+  
+  // Add this state for refresh control
+  const [refreshing, setRefreshing] = useState(false);
+  
+  // Add this function to handle refresh
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    
+    // Reload user profile and other data
+    const refreshData = async () => {
       try {
-        const response = await getUserProfile();
-        setUserProfile(response.data);
+        // Reset user profile state
+        setUserProfile(null);
+        setLoading(true);
+        
+        // Re-fetch user profile
+        await fetchUserProfile();
       } catch (error) {
-        console.log('Error fetching profile:', error);
-        // For demo, set mock data
-        setUserProfile({ email: 'user@example.com' });
+        console.log('Error refreshing data:', error);
       } finally {
-        setLoading(false);
+        setRefreshing(false);
       }
     };
     
+    refreshData();
+  }, []);
+
+  // Extract fetchUserProfile to a named function so we can reuse it
+  const fetchUserProfile = async () => {
+    try {
+      // Also check if in guest mode
+      const isGuestMode = await AsyncStorage.getItem('is_guest_mode');
+      
+      if (isGuestMode === 'true') {
+        setUserProfile({
+          email: 'guest@example.com',
+          displayName: 'Guest',
+          fullName: 'Guest User',
+          profile_picture: ''
+        });
+        setLoading(false);
+        return;
+      }
+      
+      // Try to get from API first
+      const response = await getUserProfile();
+      const apiData = response.data;
+      
+      // Also get local storage values as fallback
+      const localDisplayName = await AsyncStorage.getItem('user_displayName');
+      const localFullName = await AsyncStorage.getItem('user_fullName');
+      const localAvatar = await AsyncStorage.getItem('user_avatar');
+      
+      setUserProfile({
+        email: apiData?.email || 'user@example.com',
+        displayName: apiData?.displayName || localDisplayName || '',
+        fullName: apiData?.full_name || apiData?.fullName || localFullName || '',
+        profile_picture: apiData?.profile_picture || localAvatar || ''
+      });
+    } catch (error) {
+      console.log('Error fetching profile:', error);
+      
+      // Fallback to local storage
+      try {
+        const email = await AsyncStorage.getItem('user_email') || 'user@example.com';
+        const displayName = await AsyncStorage.getItem('user_displayName');
+        const fullName = await AsyncStorage.getItem('user_fullName');
+        const avatar = await AsyncStorage.getItem('user_avatar');
+        
+        setUserProfile({
+          email,
+          displayName: displayName || '',
+          fullName: fullName || '',
+          profile_picture: avatar || ''
+        });
+      } catch (e) {
+        console.log('Local storage fallback failed:', e);
+        setUserProfile({ email: 'user@example.com' });
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  useEffect(() => {
     fetchUserProfile();
   }, []);
   
+  // Add this helper function at the top of your DashboardScreen function
+  const getImageUrl = (imagePath: string): string => {
+    // If it's already a full URL, use it as is
+    if (imagePath.startsWith('http')) {
+      return imagePath;
+    }
+    
+    // Your development machine's IP - should match the one in api.ts
+    const DEV_MACHINE_IP = '192.168.18.2';
+    
+    // For relative paths, add the appropriate base URL
+    if (Platform.OS === 'ios') {
+      return `http://${DEV_MACHINE_IP}:5000${imagePath}`;
+    } else if (Platform.OS === 'android') {
+      return `http://${DEV_MACHINE_IP}:5000${imagePath}`;
+    } else {
+      return `http://localhost:5000${imagePath}`;
+    }
+  };
+  
   return (
-    <ScrollView style={[styles.scrollView, { backgroundColor: colors.background }]}>
-      <View style={[styles.welcomeContainer, { backgroundColor: AppColors.secondary }]}>
-        <Image
-          source={require('@/assets/images/icon.png')}
-          style={styles.logo}
+    <ScrollView 
+      style={[styles.scrollView, { backgroundColor: colors.background }]}
+      refreshControl={
+        <RefreshControl 
+          refreshing={refreshing} 
+          onRefresh={onRefresh}
+          colors={[AppColors.primary]} // Android
+          tintColor={isDarkMode ? AppColors.primary : AppColors.secondary} // iOS
+          title="Pull to refresh" // iOS
+          titleColor={isDarkMode ? AppColors.primary : AppColors.secondary} // iOS
         />
-        <Text style={[styles.welcomeText, { color: colors.buttonText }]}>
-          Welcome to CaptainLedger
-        </Text>
+      }
+    >
+      <View style={[styles.welcomeContainer, { backgroundColor: AppColors.secondary }]}>
+        {userProfile?.email === 'guest@example.com' ? (
+          // Guest user display
+          <>
+            <Image
+              source={require('@/assets/images/icon.png')}
+              style={styles.logo}
+            />
+            <Text style={[styles.welcomeText, { color: colors.buttonText }]}>
+              Welcome back, Guest
+            </Text>
+          </>
+        ) : (
+          // Animated transitions for regular users
+          <RNView style={styles.welcomeContentContainer}>
+            {/* Personal welcome view */}
+            <Animated.View 
+              style={[
+                styles.welcomeContent,
+                { 
+                  opacity: personalOpacity, 
+                  position: 'absolute', 
+                  width: '100%',
+                  transform: [
+                    { translateY: personalY },
+                    { scale: personalScale }
+                  ]
+                }
+              ]}
+            >
+              {userProfile?.profile_picture ? (
+                <Image
+                  source={{ 
+                    uri: getImageUrl(userProfile.profile_picture)
+                  }}
+                  style={styles.profileImage}
+                  defaultSource={require('@/assets/images/default-profile.svg')}
+                />
+              ) : (
+                <RNView style={styles.avatarPlaceholder}>
+                  <Text style={styles.avatarText}>
+                    {userProfile?.fullName ? userProfile.fullName[0].toUpperCase() : 'U'}
+                  </Text>
+                </RNView>
+              )}
+              <Text style={[styles.welcomeText, { color: colors.buttonText }]}>
+                Welcome back, {getDisplayName()}
+              </Text>
+            </Animated.View>
+            
+            {/* Logo welcome view */}
+            <Animated.View 
+              style={[
+                styles.welcomeContent,
+                { 
+                  opacity: logoOpacity, 
+                  position: 'absolute', 
+                  width: '100%',
+                  transform: [
+                    { translateY: logoY },
+                    { scale: logoScale }
+                  ]
+                }
+              ]}
+            >
+              <Image
+                source={require('@/assets/images/icon.png')}
+                style={styles.logo}
+              />
+              <Text style={[styles.welcomeText, { color: colors.buttonText }]}>
+                Welcome to CaptainLedger
+              </Text>
+            </Animated.View>
+          </RNView>
+        )}
+        
+        {/* Email stays outside the animated container for stability */}
         <Text style={[styles.userEmail, { color: isDarkMode ? 'rgba(255, 255, 255, 0.7)' : 'rgba(255, 255, 255, 0.8)' }]}>
-          {loading ? 'Loading...' : userProfile?.email || 'Guest User'}
+          {loading ? 'Loading...' : userProfile?.email === 'guest@example.com' ? 'Guest Mode' : userProfile?.email || 'Guest User'}
         </Text>
       </View>
       
@@ -218,9 +536,24 @@ const styles = StyleSheet.create({
   welcomeContainer: {
     alignItems: 'center',
     backgroundColor: AppColors.secondary,
-    paddingTop: 60,
+    paddingTop: 20,
     paddingBottom: 30,
     paddingHorizontal: 20,
+    height: 220, // Fixed height to prevent layout shifts
+  },
+  welcomeContentContainer: {
+    height: 150, // Fixed height container
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  welcomeContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   logo: {
     width: 60,
@@ -228,13 +561,35 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     marginBottom: 10,
   },
+  profileImage: {
+    width: 80, 
+    height: 80,
+    borderRadius: 40,
+    borderWidth: 2,
+    borderColor: 'white',
+    marginBottom: 10,
+  },
+  avatarPlaceholder: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: AppColors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  avatarText: {
+    fontSize: 36,
+    fontWeight: 'bold',
+    color: 'white',
+  },
   welcomeText: {
     fontSize: 24,
     fontWeight: 'bold',
   },
   userEmail: {
     fontSize: 16,
-    marginTop: 5,
+    marginBottom: 10, // Added bottom margin for better spacing
   },
   summaryCard: {
     borderRadius: 12,

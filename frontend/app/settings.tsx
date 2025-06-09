@@ -132,7 +132,7 @@ export default function SettingsScreen() {
           </Text>
         </RNView>
         <Switch
-          trackColor={{ false: '#767577', true: AppColors.lightGreen }}
+          trackColor={{ false: '#767577', true: AppColors.primary }}
           thumbColor={value ? AppColors.primary : '#f4f3f4'}
           onValueChange={onChange}
           value={value}

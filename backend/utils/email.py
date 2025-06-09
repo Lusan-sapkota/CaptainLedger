@@ -4,6 +4,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 from flask import current_app
+import requests  # Add this import for geolocation API
 
 class EmailService:
     def __init__(self):
@@ -11,10 +12,39 @@ class EmailService:
         self.smtp_port = int(os.environ.get('SMTP_PORT', 587))
         self.sender_email = os.environ.get('SENDER_EMAIL')
         self.sender_password = os.environ.get('SENDER_PASSWORD')
+        self.geolocation_api_key = os.environ.get('GEOLOCATION_API_KEY', '')
         
+    def get_location_from_ip(self, ip_address):
+        """Get location information from IP address using ipinfo.io service"""
+        if not ip_address or ip_address == '127.0.0.1' or ip_address.startswith('192.168.'):
+            return "Local network"
+            
+        try:
+            # Free tier of ipinfo.io doesn't require API key for limited usage
+            if self.geolocation_api_key:
+                url = f"https://ipinfo.io/{ip_address}?token={self.geolocation_api_key}"
+            else:
+                url = f"https://ipinfo.io/{ip_address}/json"
+                
+            response = requests.get(url, timeout=3)
+            if response.status_code == 200:
+                data = response.json()
+                city = data.get('city', '')
+                region = data.get('region', '')
+                country = data.get('country', '')
+                
+                location_parts = [part for part in [city, region, country] if part]
+                if location_parts:
+                    return ", ".join(location_parts)
+            
+            return "Unknown location"
+        except Exception as e:
+            current_app.logger.error(f"Geolocation error: {str(e)}")
+            return "Location lookup failed"
+    
     def _send_email(self, recipient, subject, html_content, text_content=""):
         """Send an email with both HTML and plain text versions."""
-        if not self.sender_email or not self.sender_password:
+        if not self.smtp_server or not self.sender_email or not self.sender_password:
             current_app.logger.warning("Email credentials not configured. Skipping email send.")
             return False
         
@@ -23,17 +53,31 @@ class EmailService:
             message["Subject"] = subject
             message["From"] = f"CaptainLedger <{self.sender_email}>"
             message["To"] = recipient
+            # Add Content-Type header with charset
+            message["Content-Type"] = "text/html; charset=utf-8"
             
             # Add plain text and HTML parts
             if text_content:
-                message.attach(MIMEText(text_content, "plain"))
-            message.attach(MIMEText(html_content, "html"))
+                part1 = MIMEText(text_content, "plain", "utf-8")
+                message.attach(part1)
+            
+            part2 = MIMEText(html_content, "html", "utf-8")
+            message.attach(part2)
             
             # Connect to server and send email
-            with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
+            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
+            server.ehlo()
+            
+            if server.has_extn('STARTTLS'):
                 server.starttls()
-                server.login(self.sender_email, self.sender_password)
-                server.sendmail(self.sender_email, recipient, message.as_string())
+                server.ehlo()
+                
+            server.login(self.sender_email, self.sender_password)
+            
+            # Convert message to bytes explicitly with UTF-8 encoding
+            message_bytes = message.as_string().encode('utf-8')
+            server.sendmail(self.sender_email, recipient, message_bytes)
+            server.quit()
             
             current_app.logger.info(f"Email sent to {recipient}")
             return True
@@ -65,16 +109,21 @@ class EmailService:
                 <p>Best regards,<br>The CaptainLedger Team</p>
             </div>
             <div style="background-color: #2C3E50; color: white; padding: 15px; text-align: center; font-size: 12px;">
-                <p>© {datetime.now().year} CaptainLedger. All rights reserved.</p>
+                <p>&copy; {datetime.now().year} CaptainLedger. All rights reserved.</p>
             </div>
         </div>
         """
         
         return self._send_email(email, subject, html_content)
     
-    def send_login_notification(self, email, device_info=""):
-        """Send a login notification email."""
+    def send_login_notification(self, email, device_info="", ip_address=""):
+        """Send a login notification email with location info."""
         subject = "New Login to CaptainLedger"
+        
+        # Get location from IP if provided
+        location = "Unknown"
+        if ip_address:
+            location = self.get_location_from_ip(ip_address)
         
         html_content = f"""
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -86,11 +135,42 @@ class EmailService:
                 <p>We detected a new login to your CaptainLedger account.</p>
                 <p><strong>Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} UTC</p>
                 <p><strong>Device:</strong> {device_info}</p>
+                <p><strong>Location:</strong> {location}</p>
                 <p>If this was you, you can ignore this email. If you didn't login recently, please change your password immediately.</p>
                 <p>Best regards,<br>The CaptainLedger Team</p>
             </div>
             <div style="background-color: #2C3E50; color: white; padding: 15px; text-align: center; font-size: 12px;">
-                <p>© {datetime.now().year} CaptainLedger. All rights reserved.</p>
+                <p>&copy; {datetime.now().year} CaptainLedger. All rights reserved.</p>
+            </div>
+        </div>
+        """
+        
+        return self._send_email(email, subject, html_content)
+    
+    def send_otp_email(self, email, otp, name=""):
+        """Send an OTP verification email."""
+        subject = "Verify Your CaptainLedger Account"
+        
+        html_content = f"""
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <div style="background-color: #27AE60; padding: 20px; text-align: center; color: white;">
+                <h1>Verify Your Account</h1>
+            </div>
+            <div style="padding: 30px; background-color: #f9f9f9; text-align: center;">
+                <p>Hello{f" {name}" if name else ""},</p>
+                <p>Thank you for signing up for CaptainLedger! Please use the verification code below to complete your registration:</p>
+                
+                <div style="background-color: #fff; border: 2px dashed #27AE60; border-radius: 8px; padding: 20px; margin: 20px 0; font-size: 32px; font-weight: bold; color: #27AE60; letter-spacing: 8px;">
+                    {otp}
+                </div>
+                
+                <p style="color: #666; font-size: 14px;">This code will expire in 10 minutes.</p>
+                <p style="color: #666; font-size: 14px;">If you didn't request this, please ignore this email.</p>
+                
+                <p>Best regards,<br>The CaptainLedger Team</p>
+            </div>
+            <div style="background-color: #2C3E50; color: white; padding: 15px; text-align: center; font-size: 12px;">
+                <p>&copy; {datetime.now().year} CaptainLedger. All rights reserved.</p>
             </div>
         </div>
         """

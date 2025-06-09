@@ -1,5 +1,5 @@
-import { StyleSheet, FlatList, TouchableOpacity, View as RNView, Dimensions, ActivityIndicator, Platform } from 'react-native';
-import { useState, useEffect, useMemo } from 'react';
+import { StyleSheet, FlatList, TouchableOpacity, View as RNView, Dimensions, ActivityIndicator, Platform, RefreshControl } from 'react-native';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Text, View } from '@/components/Themed';
 import { getTransactions, Transaction } from '@/services/api';
 import { AppColors } from './_layout';
@@ -12,15 +12,21 @@ export default function HistoryScreen() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const { isDarkMode, colors } = useTheme();
   
   useEffect(() => {
     loadTransactions();
   }, []);
 
-  const loadTransactions = async () => {
+  const loadTransactions = async (isRefreshing = false) => {
     try {
-      setLoading(true);
+      if (isRefreshing) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+      
       setError(null);
       const response = await getTransactions();
       setTransactions(response.data.transactions);
@@ -45,8 +51,13 @@ export default function HistoryScreen() {
       ]);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
+  
+  const onRefresh = useCallback(() => {
+    loadTransactions(true);
+  }, []);
 
   // Group transactions by month
   const groupedTransactions = useMemo(() => {
@@ -142,7 +153,7 @@ export default function HistoryScreen() {
     return (
       <View style={[styles.errorContainer, { backgroundColor: colors.background }]}>
         <Text style={styles.errorText}>{error}</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={loadTransactions}>
+        <TouchableOpacity style={styles.retryButton} onPress={() => loadTransactions()}>
           <Text style={styles.retryButtonText}>Retry</Text>
         </TouchableOpacity>
       </View>
@@ -164,6 +175,16 @@ export default function HistoryScreen() {
         renderItem={renderMonthSection}
         keyExtractor={item => item.title}
         contentContainerStyle={styles.listContent}
+        refreshControl={
+          <RefreshControl 
+            refreshing={refreshing} 
+            onRefresh={onRefresh}
+            colors={[AppColors.primary]}
+            tintColor={isDarkMode ? AppColors.primary : AppColors.secondary}
+            title="Pull to refresh"
+            titleColor={isDarkMode ? AppColors.primary : AppColors.secondary}
+          />
+        }
         ListEmptyComponent={
           <View style={[styles.emptyContainer, { backgroundColor: colors.background }]}>
             <Text style={[styles.emptyText, { color: colors.subText }]}>No transaction history found</Text>
@@ -249,7 +270,7 @@ const styles = StyleSheet.create({
     width: 46,
     height: 46,
     borderRadius: 23,
-    backgroundColor: AppColors.lightGreen,
+    backgroundColor: AppColors.primary,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,

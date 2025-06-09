@@ -7,7 +7,8 @@ from models.models import db  # Assuming db is initialized in models.models
 from config.config import Config  # Import the Config class
 
 # Import blueprints
-from routes.auth import auth_bp
+from api.auth import auth_bp as api_auth_bp
+from routes.auth import auth_bp as routes_auth_bp
 from routes.transactions import transactions_bp
 from routes.sync import sync_bp
 # Add other blueprint imports if you have them (e.g., user_bp)
@@ -18,13 +19,14 @@ def create_app():
     # Load configuration from Config object
     app.config.from_object(Config)
     
-    CORS(app, resources={r"/api/*": {"origins": "*"}})  # Enable CORS
+    CORS(app, origins=["http://localhost:8081", "http://localhost:3000"])  # Add your frontend URLs
     
     db.init_app(app)  # Initialize SQLAlchemy
     JWTManager(app)  # Initialize JWTManager AFTER config is loaded
 
     # Register blueprints
-    app.register_blueprint(auth_bp, url_prefix='/api/auth')
+    app.register_blueprint(api_auth_bp, url_prefix='/api/auth')
+    app.register_blueprint(routes_auth_bp, url_prefix='/auth')
     app.register_blueprint(transactions_bp, url_prefix='/api/transactions')
     app.register_blueprint(sync_bp, url_prefix='/api/sync')
     # Register other blueprints...

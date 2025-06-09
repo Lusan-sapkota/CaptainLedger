@@ -77,16 +77,10 @@ export default function ProfileSetupScreen() {
     }
   };
 
-  const handleSaveProfile = async () => {
+  const handleComplete = async () => {
     setLoading(true);
-
     try {
-      // Here you'd upload the image and update the user profile
-      
-      // For now, we'll just simulate the API call
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      // Store user details locally
+      // Save profile data
       if (displayName) {
         await AsyncStorage.setItem('user_displayName', displayName);
       }
@@ -104,6 +98,7 @@ export default function ProfileSetupScreen() {
       }
       
       await AsyncStorage.setItem('profile_setup_completed', 'true');
+      await AsyncStorage.setItem('completed_onboarding', 'true');
       
       // Navigate to the main app
       router.replace('/');
@@ -117,6 +112,7 @@ export default function ProfileSetupScreen() {
   
   const handleSkip = async () => {
     await AsyncStorage.setItem('profile_setup_completed', 'true');
+    await AsyncStorage.setItem('completed_onboarding', 'true');
     router.replace('/');
   };
 
@@ -249,7 +245,7 @@ export default function ProfileSetupScreen() {
       
       <TouchableOpacity
         style={[styles.button, { opacity: loading ? 0.7 : 1 }]}
-        onPress={handleSaveProfile}
+        onPress={handleComplete}
         disabled={loading}
       >
         {loading ? (

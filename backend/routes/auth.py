@@ -9,7 +9,8 @@ from flask_mail import Message
 from flask import current_app
 import sqlite3
 
-auth_bp = Blueprint('auth', __name__)
+# Change the name to avoid conflicts
+auth_bp = Blueprint('routes_auth', __name__)
 
 # Store OTPs in memory (in production, use Redis or DB)
 otp_store = {}  # {email: {'otp': '123456', 'expires': datetime}}
@@ -28,29 +29,31 @@ def register():
     if User.query.filter_by(email=data['email']).first():
         return jsonify({'error': 'Email already registered'}), 409
     
-    user = User(
-        email=data['email'],
-        password_hash=generate_password_hash(data['password'])
-    )
+    # Generate OTP
+    otp = generate_otp()
     
-    db.session.add(user)
-    db.session.commit()
+    # Store OTP and user data
+    otp_store[data['email']] = {
+        'otp': otp,
+        'expires': datetime.utcnow() + timedelta(minutes=10),
+        'user_data': {
+            'email': data['email'],
+            'password': data['password'],
+            'fullName': data.get('fullName', ''),
+            'country': data.get('country', 'Nepal')
+        }
+    }
     
-    # Send welcome email
-    email_service.send_welcome_email(
+    # Send OTP email
+    email_service.send_otp_email(
         data['email'], 
+        otp,
         name=data.get('fullName', '')
     )
     
-    access_token = create_access_token(identity=user.id)
-    
     return jsonify({
-        'message': 'User registered successfully',
-        'user': {
-            'id': user.id,
-            'email': user.email
-        },
-        'token': access_token
+        'message': 'Registration initiated. Please check your email for OTP.',
+        'email': data['email']
     }), 201
 
 @auth_bp.route('/login', methods=['POST'])
@@ -118,56 +121,65 @@ def verify_otp():
     if not stored_data:
         return jsonify({
             'success': False,
-            'verified': False, 
             'message': 'OTP expired or not found. Please request a new code.'
-        }), 200
+        }), 400
     
     if datetime.utcnow() > stored_data['expires']:
         # OTP expired
         otp_store.pop(email, None)
         return jsonify({
-            'success': False,
-            'verified': False, 
+            'success': False, 
             'message': 'OTP expired. Please request a new code.'
-        }), 200
+        }), 400
     
     if otp != stored_data['otp']:
         return jsonify({
             'success': False,
-            'verified': False, 
             'message': 'Invalid verification code.'
-        }), 200
+        }), 400
     
-    # OTP is valid - update user verification status using SQLAlchemy
+    # OTP is valid - create user
     try:
-        user = User.query.filter_by(email=email).first()
+        user_data = stored_data['user_data']
         
-        if user:
-            user.email_verified = True
-            user.email_verified_at = datetime.utcnow()
-            db.session.commit()
-            
-            # Clear OTP from store
-            otp_store.pop(email, None)
-            
-            return jsonify({
-                'success': True,
-                'verified': True,
-                'message': 'Email verified successfully'
-            }), 200
-        else:
-            return jsonify({
-                'success': False,
-                'verified': False,
-                'message': 'User not found. Please sign up first.'
-            }), 200
+        user = User(
+            email=user_data['email'],
+            password_hash=generate_password_hash(user_data['password']),
+            fullName=user_data.get('fullName'),
+            country=user_data.get('country', 'Nepal'),
+            email_verified=True,
+            email_verified_at=datetime.utcnow()
+        )
+        
+        db.session.add(user)
+        db.session.commit()
+        
+        # Clear OTP from store
+        otp_store.pop(email, None)
+        
+        # Generate JWT token
+        access_token = create_access_token(identity=user.id)
+        
+        # Send welcome email
+        email_service.send_welcome_email(user.email, name=user.fullName)
+        
+        return jsonify({
+            'success': True,
+            'token': access_token,
+            'user': {
+                'id': user.id,
+                'email': user.email,
+                'full_name': user.fullName,
+                'country': user.country
+            }
+        }), 201
+        
     except Exception as e:
         db.session.rollback()
-        print(f"Database error during OTP verification: {e}")
+        print(f"Database error during user creation: {e}")
         return jsonify({
             'success': False,
-            'verified': False,
-            'message': 'An error occurred while verifying your email.'
+            'message': 'An error occurred while creating your account.'
         }), 500
 
 # Add this route to handle OTP resending
@@ -180,15 +192,17 @@ def resend_otp():
     if not email:
         return jsonify({'error': 'Email is required'}), 400
     
-    # Check if user exists in database using SQLAlchemy
+    # Check if user exists or if OTP is already stored
     try:
-        user = User.query.filter_by(email=email).first()
+        user_exists = User.query.filter_by(email=email).first()
+        otp_data = otp_store.get(email)
         
-        if not user:
+        # If neither user nor OTP exists, user hasn't started signup
+        if not user_exists and not otp_data:
             return jsonify({
                 'success': False,
-                'message': 'User not found. Please sign up first.'
-            }), 200
+                'message': 'No registration found for this email. Please sign up first.'
+            }), 400
     except Exception as e:
         print(f"Database error during OTP resend: {e}")
         return jsonify({
@@ -198,21 +212,38 @@ def resend_otp():
     
     # Generate new OTP
     new_otp = generate_otp()
+    
+    # Get user data if it exists
+    user_data = None
+    if email in otp_store and 'user_data' in otp_store[email]:
+        user_data = otp_store[email]['user_data']
+    
+    # Update OTP data
     otp_store[email] = {
         'otp': new_otp,
-        'expires': datetime.utcnow() + timedelta(minutes=15)  # OTP valid for 15 minutes
+        'expires': datetime.utcnow() + timedelta(minutes=15),  # OTP valid for 15 minutes
+        'user_data': user_data  # Keep user data if it exists
     }
     
-    # In production, send email with OTP here
-    # send_otp_email(email, new_otp)
+    # Send OTP email
+    name = user_data.get('fullName', '') if user_data else ''
     
-    # For testing purposes, log the OTP
-    print(f"OTP for {email}: {new_otp}")
+    # Uncomment this to send actual email
+    email_sent = email_service.send_otp_email(email, new_otp, name)
     
-    return jsonify({
-        'success': True,
-        'message': 'Verification code sent successfully'
-    }), 200
+    if email_sent:
+        return jsonify({
+            'success': True,
+            'message': 'Verification code sent to your email'
+        }), 200
+    else:
+        # For development, return OTP
+        print(f"OTP for {email}: {new_otp}")
+        return jsonify({
+            'success': True,
+            'message': 'Verification code sent (check console for development)',
+            'dev_otp': new_otp  # Only include in development
+        }), 200
 
 # Add this route at the end of your file
 

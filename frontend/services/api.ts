@@ -2,24 +2,26 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { AxiosResponse } from 'axios'; 
+import { router } from 'expo-router';
 
 // Default backend URL - different for iOS simulator vs Android emulator
 const getDefaultApiUrl = () => {
+  // Your computer's IP address on the same network as your mobile device
+  const DEV_MACHINE_IP = '192.168.18.2'; // Change this to your computer's actual IP
+  
   if (Platform.OS === 'ios') {
-    return 'http://localhost:5000/api'; // iOS simulator can use localhost
+    return `http://${DEV_MACHINE_IP}:5000/api`; // Use IP instead of localhost
   } else if (Platform.OS === 'android') {
-    // Try multiple possible addresses for Android
-    // On physical devices, this should be your computer's network IP
-    return 'http://192.168.18.2:5000/api';
+    return `http://${DEV_MACHINE_IP}:5000/api`;
   } else {
-    return 'http://localhost:5000/api'; // Web or unknown
+    return 'http://localhost:5000/api'; // Web can still use localhost
   }
 };
 
-// Create axios instance
+// Create axios instance with the dynamically determined URL
 const api = axios.create({
   baseURL: getDefaultApiUrl(),
-  timeout: 10000,
+  timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
   }
@@ -28,11 +30,16 @@ const api = axios.create({
 // Add a request interceptor to add the token
 api.interceptors.request.use(
   async (config) => {
-    // Get token from storage
     const token = await AsyncStorage.getItem('auth_token');
-    if (token) {
-      config.headers['Authorization'] = `Bearer ${token}`;  // Ensure space after 'Bearer'
+    
+    // Only add header if we have a valid token (not offline/guest tokens)
+    if (token && !token.includes('offline') && !token.includes('guest')) {
+      config.headers['Authorization'] = `Bearer ${token}`;
+    } else if (config.url?.includes('/auth/')) {
+      // For auth endpoints, we might want to handle this differently
+      console.log('No valid token for auth endpoint, request may fail');
     }
+    
     return config;
   },
   (error) => {
@@ -40,123 +47,27 @@ api.interceptors.request.use(
   }
 );
 
-// Replace both existing interceptors with this single unified interceptor
-
+// Update the API error interceptor
 api.interceptors.response.use(
-  response => response,
-  async error => {
-    console.log('API error intercepted:', error?.response?.status || 'Network error');
-    
-    // Check if this is a profile request that failed
-    const isProfileRequest = error.config && error.config.url && 
-                           error.config.url.includes('/auth/profile');
-    
-    // Handle specific profile errors regardless of platform or error type
-    if (isProfileRequest) {
-      console.log('Profile request error, returning mock data');
+  (response) => response,
+  async (error) => {
+    if (error.response && error.response.status === 401) {
+      console.log('Authentication error: Invalid or expired token');
       
-      // Set offline mode for all platforms, including web
-      await AsyncStorage.setItem('auth_token', 'offline-token');
-      await AsyncStorage.setItem('user_id', 'offline');
-      await AsyncStorage.setItem('user_email', 'offline@example.com');
-      await AsyncStorage.setItem('is_offline_mode', 'true');
-      await AsyncStorage.setItem('is_authenticated', 'true');
-      await AsyncStorage.setItem('completed_onboarding', 'true');
-      await AsyncStorage.setItem('user_fullName', 'Offline User');  // Add this
-      await AsyncStorage.setItem('user_country', 'Nepal');          // Add this
+      // Check if this is a login attempt (don't clear auth data on login failures)
+      const isLoginAttempt = error.config.url.includes('/login') || 
+                           error.config.url.includes('/register');
       
-      return {
-        data: {
-          id: 'offline',
-          email: 'offline@example.com',
-          created_at: new Date().toISOString(),
-          last_sync: null,
-          fullName: 'Offline User',
-          country: 'Nepal'
-        },
-        status: 200,
-        statusText: 'OK',
-        headers: {},
-        config: error.config
-      };
-    }
-    
-    // Handle general 401, 422, or network errors for all platforms
-    if ((Platform.OS === 'android' && 
-         (error.code === 'ECONNABORTED' || !error.response)) || 
-        (error.response && (error.response.status === 401 || error.response.status === 422))) {
-      
-      console.log('Setting up offline mode due to API error');
-      
-      if (error.config.url.includes('/auth/login')) {
-        // Let auth errors through on login screen
-        return Promise.reject(error);
-      }
-      
-      // Set up offline mode credentials
-      await AsyncStorage.setItem('auth_token', 'offline-token');
-      await AsyncStorage.setItem('user_id', 'offline');
-      await AsyncStorage.setItem('user_email', 'offline@example.com');
-      await AsyncStorage.setItem('is_offline_mode', 'true');
-      await AsyncStorage.setItem('is_authenticated', 'true');
-      await AsyncStorage.setItem('completed_onboarding', 'true');
-      
-      // Return appropriate mock responses based on request URL
-      if (error.config.url.includes('/auth/login') || error.config.url.includes('/auth/register')) {
-        console.log('Returning mock login data');
-        return {
-          data: {
-            message: 'Authentication successful (offline mode)',
-            user: {
-              id: 'offline',
-              email: 'offline@example.com'
-            },
-            token: 'offline-token'
-          },
-          status: 200,
-          statusText: 'OK',
-          headers: {},
-          config: error.config
-        };
-      }
-      
-      if (error.config.url.includes('/auth/profile')) {
-        console.log('Returning mock profile data');
-        return {
-          data: {
-            id: 'offline',
-            email: 'offline@example.com',
-            created_at: new Date().toISOString(),
-            last_sync: null,
-            fullName: 'Offline User',
-            country: 'Nepal'
-          },
-          status: 200,
-          statusText: 'OK',
-          headers: {},
-          config: error.config
-        };
-      }
-      
-      if (error.config.url.includes('/transactions')) {
-        console.log('Returning mock transactions data');
-        return {
-          data: {
-            transactions: [
-              { id: '1', amount: -25.99, currency: 'USD', date: '2023-10-25', category: 'Food', note: 'Groceries' },
-              { id: '2', amount: -12.50, currency: 'USD', date: '2023-10-24', category: 'Transport', note: 'Uber ride' },
-              { id: '3', amount: 1500.00, currency: 'USD', date: '2023-10-22', category: 'Income', note: 'Salary' }
-            ]
-          },
-          status: 200,
-          statusText: 'OK',
-          headers: {},
-          config: error.config
-        };
+      if (!isLoginAttempt) {
+        // Only clear auth data for non-login requests that get 401s
+        await AsyncStorage.multiRemove([
+          'auth_token', 'user_id', 'user_email', 'is_authenticated'
+        ]);
+        
+        // Navigate back to auth
+        router.replace('/auth');
       }
     }
-    
-    // If we couldn't handle the error, reject the promise
     return Promise.reject(error);
   }
 );
@@ -171,22 +82,45 @@ interface AuthResponse {
   token: string;
 }
 
+// Update the UserProfile interface to match the backend response
 interface UserProfile {
   id: string;
   email: string;
-  created_at: string;
-  last_sync: string | null;
+  full_name?: string; // from backend
+  fullName?: string;  // Local storage version
+  displayName?: string; // Add this property to fix the error
+  country?: string;
+  gender?: string;
+  phone_number?: string;
+  bio?: string;
+  profile_picture?: string;
+  last_login?: string;
+  last_login_ip?: string;
+  last_login_device?: string;
+  last_login_location?: string;
+  is_active?: boolean;
+  is_verified?: boolean;
+  created_at?: string;
+  last_sync?: string | null;
 }
 
 // Auth APIs
-export const register = (email: string, password: string, fullName?: string, country?: string, gender?: string): Promise<AxiosResponse<AuthResponse>> => {
-  return api.post<AuthResponse>('/auth/register', { 
-    email, 
-    password,
-    fullName,
-    country,
-    gender
-  });
+export const register = async (email: string, password: string, fullName: string = '', country: string = 'Nepal', gender: string = '') => {
+  try {
+    const response = await api.post('/auth/register', {
+      email,
+      password,
+      fullName,
+      country,
+      gender
+    });
+    
+    console.log('Registration API response:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('Registration API error:', error);
+    throw error;
+  }
 };
 
 export const login = (email: string, password: string): Promise<AxiosResponse<AuthResponse>> => {
@@ -362,12 +296,81 @@ interface ResendOtpResponse {
 }
 
 // OTP verification APIs
-export const verifyOtp = (email: string, otp: string): Promise<AxiosResponse<VerifyOtpResponse>> => {
-  return api.post<VerifyOtpResponse>('/auth/verify-otp', { email, otp });
+export const verifyOtp = async (email: string, otp: string) => {
+  const response = await api.post('/auth/verify-otp', { email, otp });
+  return response.data;
 };
 
-export const resendOtp = (email: string): Promise<AxiosResponse<ResendOtpResponse>> => {
-  return api.post<ResendOtpResponse>('/auth/resend-otp', { email });
+export const resendOtp = async (email: string) => {
+  const response = await api.post('/auth/resend-otp', { email });
+  return response.data;
+};
+
+// Profile Types
+interface UpdateProfileRequest {
+  full_name?: string;
+  bio?: string;
+  phone_number?: string;
+  country?: string;
+  gender?: string;
+}
+
+interface ProfileUpdateResponse {
+  message: string;
+  user: UserProfile;
+}
+
+interface ProfilePictureUploadResponse {
+  message: string;
+  profile_picture_url: string;
+}
+
+// Profile APIs
+export const updateProfile = (profileData: UpdateProfileRequest): Promise<AxiosResponse<ProfileUpdateResponse>> => {
+  return api.put<ProfileUpdateResponse>('/auth/update-profile', profileData);
+};
+
+export const uploadProfilePicture = async (imageUri: string): Promise<string> => {
+  // Create form data for file upload
+  const formData = new FormData();
+  
+  // Extract filename from image URI
+  const uriParts = imageUri.split('/');
+  const fileName = uriParts[uriParts.length - 1];
+  
+  // On web, we might need to do a fetch of the image to get a blob
+  let fileBlob;
+  if (Platform.OS === 'web') {
+    const response = await fetch(imageUri);
+    fileBlob = await response.blob();
+  }
+  
+  // Append the image to form data
+  formData.append('profile_picture', Platform.OS === 'web' 
+    ? fileBlob 
+    : {
+        uri: imageUri,
+        name: fileName,
+        type: 'image/jpeg', // Adjust based on your image type
+      } as any);
+  
+  // Make the API request
+  const response = await api.post<ProfilePictureUploadResponse>(
+    '/auth/upload-profile-picture', 
+    formData,
+    {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    }
+  );
+  
+  return response.data.profile_picture_url;
+};
+
+// Add this function
+export const getUserLoginHistory = async (): Promise<AxiosResponse<any[]>> => {
+  return api.get('/auth/login-history');
 };
 
 export default api;
