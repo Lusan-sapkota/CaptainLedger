@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from datetime import datetime
-from models.models import db, Transaction
+from models.models import db, Transaction, Category
 
 transactions_bp = Blueprint('transactions', __name__)
 
@@ -153,3 +153,54 @@ def delete_transaction(transaction_id):
     return jsonify({
         'message': 'Transaction deleted successfully'
     })
+
+@transactions_bp.route('/categories', methods=['GET'])
+@jwt_required()
+def get_categories():
+    current_user_id = get_jwt_identity()
+    
+    # Get all categories for the current user
+    categories = Category.query.filter_by(user_id=current_user_id).all()
+    
+    # If no categories exist, return default ones
+    if not categories:
+        default_categories = ["Food", "Transportation", "Housing", "Entertainment", "Shopping", "Utilities", "Health", "Education", "Travel", "Other"]
+        return jsonify({
+            'categories': default_categories
+        })
+    
+    return jsonify({
+        'categories': [category.name for category in categories]
+    })
+
+@transactions_bp.route('/categories', methods=['POST'])
+@jwt_required()
+def add_category():
+    current_user_id = get_jwt_identity()
+    data = request.get_json()
+    
+    if not data or not data.get('name'):
+        return jsonify({'error': 'Category name is required'}), 400
+    
+    # Check if category already exists
+    existing_category = Category.query.filter_by(
+        user_id=current_user_id, 
+        name=data['name']
+    ).first()
+    
+    if existing_category:
+        return jsonify({'error': 'Category already exists'}), 409
+    
+    # Create new category
+    new_category = Category(
+        user_id=current_user_id,
+        name=data['name']
+    )
+    
+    db.session.add(new_category)
+    db.session.commit()
+    
+    return jsonify({
+        'message': 'Category added successfully',
+        'category': new_category.name
+    }), 201

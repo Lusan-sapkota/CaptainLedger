@@ -5,15 +5,16 @@ from models.models import db, User
 from utils.email import email_service
 import random
 from datetime import datetime, timedelta
-from flask_mail import Message
-from flask import current_app
-import sqlite3
 
 # Change the name to avoid conflicts
 auth_bp = Blueprint('routes_auth', __name__)
 
 # Store OTPs in memory (in production, use Redis or DB)
 otp_store = {}  # {email: {'otp': '123456', 'expires': datetime}}
+
+# Add a dictionary to store trusted devices
+# In a production environment, this should be stored in a database
+trusted_devices = {}
 
 def generate_otp():
     """Generate a 6-digit OTP"""
@@ -68,11 +69,20 @@ def login():
     if not user or not check_password_hash(user.password_hash, data['password']):
         return jsonify({'error': 'Invalid credentials'}), 401
     
-    # Send login notification
-    email_service.send_login_notification(
-        user.email, 
-        device_info=request.headers.get('User-Agent', 'Unknown device')
-    )
+    # Check if login is from a trusted device
+    device_id = data.get('deviceId')
+    is_trusted_device = False
+    
+    if device_id and user.id in trusted_devices:
+        trusted_device_ids = [d['id'] for d in trusted_devices[user.id]]
+        is_trusted_device = device_id in trusted_device_ids
+    
+    # Only send login notification for non-trusted devices
+    if not is_trusted_device:
+        email_service.send_login_notification(
+            user.email, 
+            device_info=request.headers.get('User-Agent', 'Unknown device')
+        )
     
     access_token = create_access_token(identity=user.id)
     
@@ -82,7 +92,8 @@ def login():
             'id': user.id,
             'email': user.email
         },
-        'token': access_token
+        'token': access_token,
+        'is_trusted_device': is_trusted_device
     })
 
 @auth_bp.route('/profile', methods=['GET'])
@@ -268,3 +279,54 @@ def db_status():
             'status': 'disconnected',
             'error': str(e)
         }), 500
+
+@auth_bp.route('/register-device', methods=['POST'])
+@jwt_required()
+def register_trusted_device():
+    current_user_id = get_jwt_identity()
+    data = request.get_json()
+    
+    if not data or not data.get('deviceId'):
+        return jsonify({'error': 'Device ID is required'}), 400
+    
+    device_id = data.get('deviceId')
+    device_info = data.get('deviceInfo', {})
+    
+    # Store in the trusted devices dictionary
+    if current_user_id not in trusted_devices:
+        trusted_devices[current_user_id] = []
+        
+    # Check if device is already registered
+    if device_id not in [d['id'] for d in trusted_devices[current_user_id]]:
+        trusted_devices[current_user_id].append({
+            'id': device_id,
+            'info': device_info,
+            'added_at': datetime.utcnow().isoformat()
+        })
+    
+    return jsonify({
+        'message': 'Device registered successfully',
+        'device_id': device_id
+    })
+
+@auth_bp.route('/remove-device', methods=['POST'])
+@jwt_required()
+def remove_trusted_device():
+    current_user_id = get_jwt_identity()
+    data = request.get_json()
+    
+    if not data or not data.get('deviceId'):
+        return jsonify({'error': 'Device ID is required'}), 400
+    
+    device_id = data.get('deviceId')
+    
+    if current_user_id in trusted_devices:
+        # Filter out the device to remove
+        trusted_devices[current_user_id] = [
+            d for d in trusted_devices[current_user_id] 
+            if d['id'] != device_id
+        ]
+    
+    return jsonify({
+        'message': 'Device removed successfully'
+    })

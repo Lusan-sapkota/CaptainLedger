@@ -239,7 +239,20 @@ export default function ProfileSetupScreen() {
             multiline
             numberOfLines={4}
             textAlignVertical="top"
+            maxLength={150}
           />
+          <View style={styles.characterCountContainer}>
+            <Text style={[
+              styles.characterCount, 
+              { 
+                color: bio.length > 120 
+                  ? (bio.length > 140 ? AppColors.danger : '#FF9800') 
+                  : colors.subText 
+              }
+            ]}>
+              {bio.length}/150 characters
+            </Text>
+          </View>
         </View>
       </View>
       
@@ -393,5 +406,13 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  characterCountContainer: {
+    alignItems: 'flex-end',
+    marginTop: 5,
+  },
+  characterCount: {
+    fontSize: 12,
+    fontStyle: 'italic',
   },
 });

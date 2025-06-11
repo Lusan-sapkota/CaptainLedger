@@ -3,28 +3,33 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { AxiosResponse } from 'axios'; 
 import { router } from 'expo-router';
+import * as Device from 'expo-device';
 
 // Default backend URL - different for iOS simulator vs Android emulator
 const getDefaultApiUrl = () => {
-  // Your computer's IP address on the same network as your mobile device
-  const DEV_MACHINE_IP = '192.168.18.2'; // Change this to your computer's actual IP
+  const LOCAL_PORT = '5000'; // This is correct, but needs to be enforced
   
-  if (Platform.OS === 'ios') {
-    return `http://${DEV_MACHINE_IP}:5000/api`; // Use IP instead of localhost
+  // For web platform, instead of using a relative URL, specify the full URL with port
+  if (Platform.OS === 'web') {
+    return `http://localhost:${LOCAL_PORT}/api`;
+  } else if (Platform.OS === 'ios') {
+    return `http://localhost:${LOCAL_PORT}/api`;
   } else if (Platform.OS === 'android') {
-    return `http://${DEV_MACHINE_IP}:5000/api`;
+    return `http://10.0.2.2:${LOCAL_PORT}/api`;
   } else {
-    return 'http://localhost:5000/api'; // Web can still use localhost
+    return `http://localhost:${LOCAL_PORT}/api`;
   }
 };
 
 // Create axios instance with the dynamically determined URL
 const api = axios.create({
   baseURL: getDefaultApiUrl(),
-  timeout: 30000,
+  timeout: 10000, // Reduce timeout for better user feedback
   headers: {
     'Content-Type': 'application/json',
-  }
+  },
+  // Add withCredentials to help with CORS
+  withCredentials: Platform.OS === 'web'
 });
 
 // Add a request interceptor to add the token
@@ -32,11 +37,11 @@ api.interceptors.request.use(
   async (config) => {
     const token = await AsyncStorage.getItem('auth_token');
     
-    // Only add header if we have a valid token (not offline/guest tokens)
+    console.log(`Request to ${config.url} with token: ${token ? 'Present' : 'None'}`);
+    
     if (token && !token.includes('offline') && !token.includes('guest')) {
       config.headers['Authorization'] = `Bearer ${token}`;
     } else if (config.url?.includes('/auth/')) {
-      // For auth endpoints, we might want to handle this differently
       console.log('No valid token for auth endpoint, request may fail');
     }
     
@@ -123,8 +128,19 @@ export const register = async (email: string, password: string, fullName: string
   }
 };
 
-export const login = (email: string, password: string): Promise<AxiosResponse<AuthResponse>> => {
-  return api.post<AuthResponse>('/auth/login', { email, password });
+export const login = async (email: string, password: string, deviceId?: string) => {
+  try {
+    const response = await api.post('/auth/login', {
+      email,
+      password,
+      deviceId // Pass the device ID to the API
+    });
+    
+    return response;
+  } catch (error) {
+    console.error('Login error:', error);
+    throw error;
+  }
 };
 
 export const getUserProfile = (): Promise<AxiosResponse<UserProfile>> => {
@@ -175,7 +191,11 @@ interface TransactionResponse {
 }
 
 // Transaction APIs
-export const getTransactions = (filters = {}): Promise<AxiosResponse<TransactionsResponse>> => {
+export const getTransactions = (filters: {
+  category?: string;
+  start_date?: string;
+  end_date?: string;
+} = {}): Promise<AxiosResponse<TransactionsResponse>> => {
   return api.get<TransactionsResponse>('/transactions', { params: filters });
 };
 
@@ -371,6 +391,110 @@ export const uploadProfilePicture = async (imageUri: string): Promise<string> =>
 // Add this function
 export const getUserLoginHistory = async (): Promise<AxiosResponse<any[]>> => {
   return api.get('/auth/login-history');
+};
+
+// Interface for API response with categories
+export interface Category {
+  name: string;
+  color: string;
+}
+
+interface CategoriesResponse {
+  categories: Category[];
+}
+
+// Get categories API function
+export const getCategoriesApi = (): Promise<AxiosResponse<CategoriesResponse>> => {
+  return api.get<CategoriesResponse>('/transactions/categories')
+    .catch(error => {
+      console.error('Error loading categories:', error);
+      // Return a default response with empty categories to prevent crashes
+      return {
+        data: { categories: [] },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config: { headers: {} as import('axios').AxiosRequestHeaders }
+      };
+    });
+};
+
+// Add this to the existing API functions
+export const registerTrustedDevice = async (userId: string, deviceId: string) => {
+  try {
+    const response = await api.post('/auth/register-device', {
+      userId,
+      deviceId,
+      deviceInfo: {
+        platform: Platform.OS,
+        name: Device.modelName || 'Unknown device',
+        timestamp: new Date().toISOString()
+      }
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Failed to register trusted device:', error);
+    // Don't throw - this is non-critical
+    return null;
+  }
+};
+
+export const removeTrustedDevice = async (deviceId: string) => {
+  try {
+    const response = await api.post('/auth/remove-device', {
+      deviceId
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Failed to remove trusted device:', error);
+    throw error;
+  }
+};
+
+// Add this to the existing API functions
+export const addCategory = async (
+  name: string, 
+  color: string, 
+  type: 'income' | 'expense' = 'expense'
+): Promise<AxiosResponse<any>> => {
+  return api.post('/transactions/categories', {
+    name,
+    color,
+    type
+  });
+};
+
+export const deleteCategory = async (categoryName: string): Promise<AxiosResponse<any>> => {
+  return api.delete(`/transactions/categories/${categoryName}`);
+};
+
+export const getCategories = async (): Promise<AxiosResponse<any>> => {
+  return api.get('/transactions/categories');
+};
+
+// Budget Types
+export interface Budget {
+  id: string;
+  category: string;
+  amount: number;
+  period: string;
+}
+
+// Budgets API
+export const getBudgets = (): Promise<AxiosResponse<{budgets: Budget[]}>> => {
+  return api.get('/budget');
+};
+
+// Add this new function
+export const updateCategory = async (
+  originalName: string,
+  updatedCategory: {
+    name: string;
+    color: string;
+    type: 'income' | 'expense';
+  }
+): Promise<AxiosResponse<any>> => {
+  return api.put(`/transactions/categories/${originalName}`, updatedCategory);
 };
 
 export default api;

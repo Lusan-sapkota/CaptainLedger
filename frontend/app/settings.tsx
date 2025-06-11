@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, ScrollView, TouchableOpacity, Switch, Alert, Platform, View as RNView } from 'react-native';
+import { StyleSheet, ScrollView, TouchableOpacity, Switch, Alert, Platform, View as RNView, ActivityIndicator } from 'react-native';
 import { Stack } from 'expo-router';
 import { Text, View } from '@/components/Themed';
 import { AppColors } from './(tabs)/_layout';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useTheme } from '@/components/ThemeProvider';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { removeTrustedDevice } from '@/services/api';
+import { getDeviceIdentifier } from '@/utils/device';
 
 const LoginHistoryList = ({ colors }: { colors: any }) => {
   const [loginHistory, setLoginHistory] = useState<any[]>([]);
@@ -98,6 +100,115 @@ const LoginHistoryList = ({ colors }: { colors: any }) => {
   );
 };
 
+const TrustedDevices = ({ colors }: { colors: any }) => {
+  const [devices, setDevices] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [currentDeviceId, setCurrentDeviceId] = useState<string | null>(null);
+  
+  useEffect(() => {
+    async function loadDevices() {
+      try {
+        // First get current device ID
+        const deviceId = await getDeviceIdentifier();
+        setCurrentDeviceId(deviceId);
+        
+        // This would be an API call in production
+        // For now, we'll just use a mock implementation
+        const storedDevices = await AsyncStorage.getItem('mock_trusted_devices');
+        if (storedDevices) {
+          setDevices(JSON.parse(storedDevices));
+        } else {
+          // Mock data with current device
+          const mockDevices = [{
+            id: deviceId,
+            name: 'This Device',
+            lastUsed: new Date().toISOString(),
+            isCurrent: true
+          }];
+          
+          setDevices(mockDevices);
+          await AsyncStorage.setItem('mock_trusted_devices', JSON.stringify(mockDevices));
+        }
+      } catch (e) {
+        console.error('Error loading trusted devices:', e);
+      } finally {
+        setLoading(false);
+      }
+    }
+    
+    loadDevices();
+  }, []);
+  
+  const handleRemoveDevice = async (deviceId: string) => {
+    try {
+      // Don't allow removing current device
+      if (deviceId === currentDeviceId) {
+        Alert.alert('Cannot Remove', 'You cannot remove the device you are currently using');
+        return;
+      }
+      
+      await removeTrustedDevice(deviceId);
+      
+      // Update local state and storage
+      const updatedDevices = devices.filter(d => d.id !== deviceId);
+      setDevices(updatedDevices);
+      await AsyncStorage.setItem('mock_trusted_devices', JSON.stringify(updatedDevices));
+    } catch (e) {
+      console.error('Error removing device:', e);
+      Alert.alert('Error', 'Failed to remove device');
+    }
+  };
+
+  if (loading) {
+    return (
+      <RNView style={{ padding: 20, alignItems: 'center' }}>
+        <ActivityIndicator size="small" color={AppColors.primary} />
+      </RNView>
+    );
+  }
+  
+  return (
+    <RNView style={{ backgroundColor: 'transparent' }}>
+      {devices.map((device, index) => (
+        <RNView 
+          key={device.id} 
+          style={[
+            styles.deviceItem,
+            index < devices.length - 1 && { borderBottomWidth: 1, borderBottomColor: colors.border },
+            { backgroundColor: 'transparent' }
+          ]}
+        >
+          <RNView style={{ flex: 1, backgroundColor: 'transparent' }}>
+            <Text style={[styles.deviceName, { color: colors.text }]}>
+              {device.name} {device.isCurrent ? '(Current Device)' : ''}
+            </Text>
+            <Text style={[styles.deviceLastUsed, { color: colors.subText }]}>
+              Last used: {new Date(device.lastUsed).toLocaleDateString()}
+            </Text>
+          </RNView>
+          
+          {!device.isCurrent && (
+            <TouchableOpacity 
+              onPress={() => handleRemoveDevice(device.id)}
+              style={styles.removeButton}
+            >
+              <FontAwesome name="trash" size={16} color={AppColors.danger} />
+            </TouchableOpacity>
+          )}
+        </RNView>
+      ))}
+      
+      {devices.length === 0 && (
+        <RNView style={styles.emptyDevicesContainer}>
+          <Text style={[styles.emptyDevicesText, { color: colors.subText }]}>
+            No trusted devices found
+          </Text>
+        </RNView>
+      )}
+    </RNView>
+  );
+};
+
 export default function SettingsScreen() {
   const { isDarkMode, colors, toggleTheme } = useTheme();
   
@@ -170,174 +281,172 @@ export default function SettingsScreen() {
   };
   
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <Stack.Screen 
-        options={{ 
-          headerStyle: {
-            backgroundColor: isDarkMode ? colors.cardBackground : AppColors.primary,
-          },
-          headerTintColor: isDarkMode ? colors.text : AppColors.white,
-        }} 
-      />
+    <ScrollView style={[styles.container, { backgroundColor: colors.background }]}>
+      {/* Appearance */}
+      <View style={[styles.section, { backgroundColor: colors.cardBackground }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Appearance</Text>
+        
+        {renderSettingSwitch(
+          "Dark Mode", 
+          "Use dark theme throughout the app", 
+          isDarkMode, 
+          handleThemeChange
+        )}
+        
+        {renderSettingOption(
+          "Language",
+          "Choose your preferred language",
+          language,
+          () => Alert.alert("Language", "This feature will be available soon")
+        )}
+      </View>
       
-      <ScrollView style={{ flex: 1 }}>
-        {/* Appearance */}
-        <View style={[styles.section, { backgroundColor: colors.cardBackground }]}>
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>Appearance</Text>
-          
-          {renderSettingSwitch(
-            "Dark Mode", 
-            "Use dark theme throughout the app", 
-            isDarkMode, 
-            handleThemeChange
-          )}
-          
-          {renderSettingOption(
-            "Language",
-            "Choose your preferred language",
-            language,
-            () => Alert.alert("Language", "This feature will be available soon")
-          )}
-        </View>
+      {/* Sync & Data */}
+      <View style={[styles.section, { backgroundColor: colors.cardBackground }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Sync & Data</Text>
         
-        {/* Sync & Data */}
-        <View style={[styles.section, { backgroundColor: colors.cardBackground }]}>
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>Sync & Data</Text>
-          
-          {renderSettingSwitch(
-            "Auto Sync",
-            "Automatically sync data when connected",
-            autoSync,
-            setAutoSync
-          )}
-          
-          {renderSettingOption(
-            "Export Data",
-            "Export your transactions as CSV",
-            "CSV",
-            () => Alert.alert("Export Data", "This feature will be available soon")
-          )}
-          
-          {renderSettingSwitch(
-            "Allow Data Export",
-            "Enable exporting financial data",
-            exportEnabled,
-            setExportEnabled
-          )}
-        </View>
+        {renderSettingSwitch(
+          "Auto Sync",
+          "Automatically sync data when connected",
+          autoSync,
+          setAutoSync
+        )}
         
-        {/* Notifications */}
-        <View style={[styles.section, { backgroundColor: colors.cardBackground }]}>
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>Notifications</Text>
-          
-          {renderSettingSwitch(
-            "Push Notifications",
-            "Receive alerts for transactions and reminders",
-            notifications,
-            setNotifications
-          )}
-          
-          {renderSettingSwitch(
-            "Budget Alerts",
-            "Get notified when you're close to budget limits",
-            true,
-            (value) => Alert.alert("Budget Alerts", value ? "Budget alerts enabled" : "Budget alerts disabled")
-          )}
-          
-          {renderSettingSwitch(
-            "Payment Reminders",
-            "Receive reminders for upcoming bills",
-            true,
-            (value) => Alert.alert("Payment Reminders", value ? "Payment reminders enabled" : "Payment reminders disabled")
-          )}
-        </View>
+        {renderSettingOption(
+          "Export Data",
+          "Export your transactions as CSV",
+          "CSV",
+          () => Alert.alert("Export Data", "This feature will be available soon")
+        )}
         
-        {/* Security */}
-        <View style={[styles.section, { backgroundColor: colors.cardBackground }]}>
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>Security</Text>
-          
-          {renderSettingSwitch(
-            "Biometric Login",
-            "Use fingerprint or face recognition",
-            biometricLogin,
-            setBiometricLogin
-          )}
-          
-          {renderSettingOption(
-            "Change Password",
-            "Update your account password",
-            "",
-            () => Alert.alert("Change Password", "This feature will be available soon")
-          )}
-          
-          {renderSettingSwitch(
-            "App Lock",
-            "Require authentication when app opens",
-            false,
-            (value) => Alert.alert("App Lock", value ? "App lock enabled" : "App lock disabled")
-          )}
-        </View>
+        {renderSettingSwitch(
+          "Allow Data Export",
+          "Enable exporting financial data",
+          exportEnabled,
+          setExportEnabled
+        )}
+      </View>
+      
+      {/* Notifications */}
+      <View style={[styles.section, { backgroundColor: colors.cardBackground }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Notifications</Text>
         
-        {/* Login History */}
-        <View style={[styles.section, { backgroundColor: colors.cardBackground }]}>
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>Login History</Text>
-          
-          <LoginHistoryList colors={colors} />
-        </View>
+        {renderSettingSwitch(
+          "Push Notifications",
+          "Receive alerts for transactions and reminders",
+          notifications,
+          setNotifications
+        )}
         
-        {/* Preferences */}
-        <View style={[styles.section, { backgroundColor: colors.cardBackground }]}>
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>Preferences</Text>
-          
-          {renderSettingOption(
-            "Currency",
-            "Set your preferred currency",
-            currencyCode,
-            () => Alert.alert("Currency", "This feature will be available soon")
-          )}
-          
-          {renderSettingOption(
-            "Date Format",
-            "Choose how dates are displayed",
-            "MM/DD/YYYY",
-            () => Alert.alert("Date Format", "This feature will be available soon")
-          )}
-        </View>
+        {renderSettingSwitch(
+          "Budget Alerts",
+          "Get notified when you're close to budget limits",
+          true,
+          (value) => Alert.alert("Budget Alerts", value ? "Budget alerts enabled" : "Budget alerts disabled")
+        )}
         
-        {/* About */}
-        <View style={[styles.section, { backgroundColor: colors.cardBackground }]}>
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>About</Text>
-          
-          <TouchableOpacity 
-            style={[styles.settingRow, { borderBottomColor: colors.border, backgroundColor: 'transparent' }]}
-            onPress={() => Alert.alert("About", "CaptainLedger v1.0.0\n\nA privacy-focused finance tracker.")}
-          >
-            <Text style={[styles.settingLabel, { color: colors.text }]}>About CaptainLedger</Text>
-            <FontAwesome name="chevron-right" size={14} color={colors.subText} />
-          </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={[styles.settingRow, { borderBottomColor: colors.border, backgroundColor: 'transparent' }]}
-            onPress={() => Alert.alert("Privacy Policy", "Our privacy policy will be displayed here.")}
-          >
-            <Text style={[styles.settingLabel, { color: colors.text }]}>Privacy Policy</Text>
-            <FontAwesome name="chevron-right" size={14} color={colors.subText} />
-          </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={[styles.settingRow, { backgroundColor: 'transparent' }]}
-            onPress={() => Alert.alert("Terms of Service", "Our terms of service will be displayed here.")}
-          >
-            <Text style={[styles.settingLabel, { color: colors.text }]}>Terms of Service</Text>
-            <FontAwesome name="chevron-right" size={14} color={colors.subText} />
-          </TouchableOpacity>
-        </View>
+        {renderSettingSwitch(
+          "Payment Reminders",
+          "Receive reminders for upcoming bills",
+          true,
+          (value) => Alert.alert("Payment Reminders", value ? "Payment reminders enabled" : "Payment reminders disabled")
+        )}
+      </View>
+      
+      {/* Security */}
+      <View style={[styles.section, { backgroundColor: colors.cardBackground }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Security</Text>
         
-        <Text style={[styles.versionText, { color: colors.subText }]}>
-          Version 1.0.0
+        {renderSettingSwitch(
+          "Biometric Login",
+          "Use fingerprint or face recognition",
+          biometricLogin,
+          setBiometricLogin
+        )}
+        
+        {renderSettingOption(
+          "Change Password",
+          "Update your account password",
+          "",
+          () => Alert.alert("Change Password", "This feature will be available soon")
+        )}
+        
+        {renderSettingSwitch(
+          "App Lock",
+          "Require authentication when app opens",
+          false,
+          (value) => Alert.alert("App Lock", value ? "App lock enabled" : "App lock disabled")
+        )}
+      </View>
+      
+      {/* Login History */}
+      <View style={[styles.section, { backgroundColor: colors.cardBackground }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Login History</Text>
+        
+        <LoginHistoryList colors={colors} />
+      </View>
+      
+      {/* Trusted Devices */}
+      <View style={[styles.section, { backgroundColor: colors.cardBackground }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Trusted Devices</Text>
+        <Text style={[styles.sectionDescription, { color: colors.subText }]}>
+          Devices you've logged in from that won't trigger login notifications
         </Text>
-      </ScrollView>
-    </View>
+        <TrustedDevices colors={colors} />
+      </View>
+      
+      {/* Preferences */}
+      <View style={[styles.section, { backgroundColor: colors.cardBackground }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Preferences</Text>
+        
+        {renderSettingOption(
+          "Currency",
+          "Set your preferred currency",
+          currencyCode,
+          () => Alert.alert("Currency", "This feature will be available soon")
+        )}
+        
+        {renderSettingOption(
+          "Date Format",
+          "Choose how dates are displayed",
+          "MM/DD/YYYY",
+          () => Alert.alert("Date Format", "This feature will be available soon")
+        )}
+      </View>
+      
+      {/* About */}
+      <View style={[styles.section, { backgroundColor: colors.cardBackground }]}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>About</Text>
+        
+        <TouchableOpacity 
+          style={[styles.settingRow, { borderBottomColor: colors.border, backgroundColor: 'transparent' }]}
+          onPress={() => Alert.alert("About", "CaptainLedger v1.0.0\n\nA privacy-focused finance tracker.")}
+        >
+          <Text style={[styles.settingLabel, { color: colors.text }]}>About CaptainLedger</Text>
+          <FontAwesome name="chevron-right" size={14} color={colors.subText} />
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={[styles.settingRow, { borderBottomColor: colors.border, backgroundColor: 'transparent' }]}
+          onPress={() => Alert.alert("Privacy Policy", "Our privacy policy will be displayed here.")}
+        >
+          <Text style={[styles.settingLabel, { color: colors.text }]}>Privacy Policy</Text>
+          <FontAwesome name="chevron-right" size={14} color={colors.subText} />
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={[styles.settingRow, { backgroundColor: 'transparent' }]}
+          onPress={() => Alert.alert("Terms of Service", "Our terms of service will be displayed here.")}
+        >
+          <Text style={[styles.settingLabel, { color: colors.text }]}>Terms of Service</Text>
+          <FontAwesome name="chevron-right" size={14} color={colors.subText} />
+        </TouchableOpacity>
+      </View>
+      
+      <Text style={[styles.versionText, { color: colors.subText }]}>
+        Version 1.0.0
+      </Text>
+    </ScrollView>
   );
 }
 
@@ -366,6 +475,11 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     padding: 15,
+  },
+  sectionDescription: {
+    fontSize: 14,
+    paddingHorizontal: 15,
+    paddingBottom: 10,
   },
   settingRow: {
     flexDirection: 'row',
@@ -429,5 +543,28 @@ const styles = StyleSheet.create({
   emptyHistoryText: {
     fontSize: 14,
     fontStyle: 'italic',
+  },
+  deviceItem: {
+    paddingVertical: 15,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  deviceName: {
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  deviceLastUsed: {
+    fontSize: 14,
+    marginTop: 2,
+  },
+  removeButton: {
+    padding: 8,
+  },
+  emptyDevicesContainer: {
+    paddingVertical: 15,
+    alignItems: 'center',
+  },
+  emptyDevicesText: {
+    fontSize: 14,
   },
 });

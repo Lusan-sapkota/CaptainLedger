@@ -35,6 +35,8 @@ class User(db.Model):
     transactions = db.relationship('Transaction', backref='user', lazy=True)
     loans = db.relationship('Loan', backref='user', lazy=True)
     bank_accounts = db.relationship('BankAccount', backref='user', lazy=True)
+    categories = db.relationship('Category', backref='user', lazy=True)
+    budgets = db.relationship('Budget', backref='user', lazy=True)
 
 class Transaction(db.Model):
     __tablename__ = 'transactions'
@@ -84,3 +86,29 @@ class SyncLog(db.Model):
     last_sync_time = db.Column(db.DateTime, default=datetime.utcnow)
     device_info = db.Column(db.String(255))
     sync_status = db.Column(db.String(20), default='success')
+
+class Category(db.Model):
+    __tablename__ = 'categories'
+    
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=False)
+    name = db.Column(db.String(50), nullable=False)
+    color = db.Column(db.String(7), default='#CCCCCC')  # Hex color code
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Define a unique constraint on user_id and name to prevent duplicates
+    __table_args__ = (db.UniqueConstraint('user_id', 'name', name='_user_category_uc'),)
+
+    def __repr__(self):
+        return f'<Category {self.name}>'
+
+class Budget(db.Model):
+    __tablename__ = 'budgets'
+    
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=False)
+    category = db.Column(db.String(50), nullable=False)
+    amount = db.Column(db.Float, nullable=False)
+    period = db.Column(db.String(20), default='monthly')  # monthly, weekly, yearly
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

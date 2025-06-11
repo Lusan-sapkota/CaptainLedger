@@ -1,5 +1,6 @@
 import os
 import smtplib
+import threading
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
@@ -13,7 +14,52 @@ class EmailService:
         self.sender_email = os.environ.get('SENDER_EMAIL')
         self.sender_password = os.environ.get('SENDER_PASSWORD')
         self.geolocation_api_key = os.environ.get('GEOLOCATION_API_KEY', '')
-        
+    
+    def _send_email_async(self, to_email, subject, html_content):
+        """Send email in a separate thread to avoid blocking the main thread."""
+        thread = threading.Thread(
+            target=self._send_email_worker,
+            args=(to_email, subject, html_content)
+        )
+        thread.daemon = True
+        thread.start()
+        return True
+    
+    def _send_email_worker(self, to_email, subject, html_content):
+        """Worker function that actually sends the email."""
+        try:
+            message = MIMEMultipart("alternative")
+            message["Subject"] = subject
+            message["From"] = f"CaptainLedger <{self.sender_email}>"
+            message["To"] = to_email
+            # Add Content-Type header with charset
+            message["Content-Type"] = "text/html; charset=utf-8"
+            
+            # Convert HTML content to MIMEText
+            html_part = MIMEText(html_content, "html", "utf-8")
+            message.attach(html_part)
+            
+            # Send email
+            with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
+                server.ehlo()
+                
+                if server.has_extn('STARTTLS'):
+                    server.starttls()
+                    server.ehlo()
+                    
+                server.login(self.sender_email, self.sender_password)
+                
+                # Convert message to bytes explicitly with UTF-8 encoding
+                message_bytes = message.as_string().encode('utf-8')
+                server.sendmail(self.sender_email, to_email, message_bytes)
+                
+            current_app.logger.info(f"Email sent to {to_email}")
+            return True
+        except Exception as e:
+            # Use print instead of current_app.logger outside of app context
+            print(f"Failed to send email: {str(e)}")
+            return False
+    
     def get_location_from_ip(self, ip_address):
         """Get location information from IP address using ipinfo.io service"""
         if not ip_address or ip_address == '127.0.0.1' or ip_address.startswith('192.168.'):
@@ -41,50 +87,6 @@ class EmailService:
         except Exception as e:
             current_app.logger.error(f"Geolocation error: {str(e)}")
             return "Location lookup failed"
-    
-    def _send_email(self, recipient, subject, html_content, text_content=""):
-        """Send an email with both HTML and plain text versions."""
-        if not self.smtp_server or not self.sender_email or not self.sender_password:
-            current_app.logger.warning("Email credentials not configured. Skipping email send.")
-            return False
-        
-        try:
-            message = MIMEMultipart("alternative")
-            message["Subject"] = subject
-            message["From"] = f"CaptainLedger <{self.sender_email}>"
-            message["To"] = recipient
-            # Add Content-Type header with charset
-            message["Content-Type"] = "text/html; charset=utf-8"
-            
-            # Add plain text and HTML parts
-            if text_content:
-                part1 = MIMEText(text_content, "plain", "utf-8")
-                message.attach(part1)
-            
-            part2 = MIMEText(html_content, "html", "utf-8")
-            message.attach(part2)
-            
-            # Connect to server and send email
-            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
-            server.ehlo()
-            
-            if server.has_extn('STARTTLS'):
-                server.starttls()
-                server.ehlo()
-                
-            server.login(self.sender_email, self.sender_password)
-            
-            # Convert message to bytes explicitly with UTF-8 encoding
-            message_bytes = message.as_string().encode('utf-8')
-            server.sendmail(self.sender_email, recipient, message_bytes)
-            server.quit()
-            
-            current_app.logger.info(f"Email sent to {recipient}")
-            return True
-            
-        except Exception as e:
-            current_app.logger.error(f"Failed to send email: {str(e)}")
-            return False
     
     def send_welcome_email(self, email, name=""):
         """Send a welcome email to new users."""
@@ -114,7 +116,7 @@ class EmailService:
         </div>
         """
         
-        return self._send_email(email, subject, html_content)
+        return self._send_email_async(email, subject, html_content)
     
     def send_login_notification(self, email, device_info="", ip_address=""):
         """Send a login notification email with location info."""
@@ -145,7 +147,7 @@ class EmailService:
         </div>
         """
         
-        return self._send_email(email, subject, html_content)
+        return self._send_email_async(email, subject, html_content)
     
     def send_otp_email(self, email, otp, name=""):
         """Send an OTP verification email."""
@@ -175,7 +177,7 @@ class EmailService:
         </div>
         """
         
-        return self._send_email(email, subject, html_content)
+        return self._send_email_async(email, subject, html_content)
 
 # Create a singleton instance
 email_service = EmailService()

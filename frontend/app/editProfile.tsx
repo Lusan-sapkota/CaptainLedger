@@ -321,116 +321,132 @@ export default function EditProfileScreen() {
           </View>
         ) : (
           <>
-            <View style={styles.avatarContainer}>
-              <TouchableOpacity style={styles.avatarWrapper} onPress={pickImage}>
-                {image ? (
-                  <Image source={{ uri: image }} style={styles.avatar} />
-                ) : (
-                  <View style={[styles.avatarPlaceholder, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.1)' : '#F0F0F0' }]}>
-                    <FontAwesome name="user" size={40} color={isDarkMode ? 'rgba(255,255,255,0.5)' : '#AAAAAA'} />
+            {/* Profile Content */}
+            <>
+              <View style={styles.avatarContainer}>
+                <TouchableOpacity style={styles.avatarWrapper} onPress={pickImage}>
+                  {image ? (
+                    <Image source={{ uri: image }} style={styles.avatar} />
+                  ) : (
+                    <View style={[styles.avatarPlaceholder, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.1)' : '#F0F0F0' }]}>
+                      <FontAwesome name="user" size={40} color={isDarkMode ? 'rgba(255,255,255,0.5)' : '#AAAAAA'} />
+                    </View>
+                  )}
+                  <View style={styles.editBadge}>
+                    <FontAwesome name="camera" size={15} color="white" />
                   </View>
-                )}
-                <View style={styles.editBadge}>
-                  <FontAwesome name="camera" size={15} color="white" />
-                </View>
-              </TouchableOpacity>
-            </View>
+                </TouchableOpacity>
+              </View>
 
-            <View style={styles.formSection}>
-              <View style={styles.inputGroup}>
-                <Text style={[styles.inputLabel, { color: colors.text }]}>Full Name</Text>
-                <TextInput
-                  style={[styles.input, { 
-                    backgroundColor: isDarkMode ? colors.inputBackground : '#F8F9FA', 
-                    color: colors.text,
-                    borderColor: isDarkMode ? 'rgba(255,255,255,0.15)' : '#DFE2E6'
-                  }]}
-                  placeholder="Enter your full name"
-                  placeholderTextColor={colors.subText}
-                  value={fullName}
-                  onChangeText={setFullName}
-                />
+              <View style={styles.formSection}>
+                <View style={styles.inputGroup}>
+                  <Text style={[styles.inputLabel, { color: colors.text }]}>Full Name</Text>
+                  <TextInput
+                    style={[styles.input, { 
+                      backgroundColor: isDarkMode ? colors.inputBackground : '#F8F9FA', 
+                      color: colors.text,
+                      borderColor: isDarkMode ? 'rgba(255,255,255,0.15)' : '#DFE2E6'
+                    }]}
+                    placeholder="Enter your full name"
+                    placeholderTextColor={colors.subText}
+                    value={fullName}
+                    onChangeText={setFullName}
+                  />
+                </View>
+                
+                <View style={styles.inputGroup}>
+                  <Text style={[styles.inputLabel, { color: colors.text }]}>Display Name</Text>
+                  <TextInput
+                    style={[styles.input, { 
+                      backgroundColor: isDarkMode ? colors.inputBackground : '#F8F9FA', 
+                      color: colors.text,
+                      borderColor: isDarkMode ? 'rgba(255,255,255,0.15)' : '#DFE2E6'
+                    }]}
+                    placeholder="How should we call you?"
+                    placeholderTextColor={colors.subText}
+                    value={displayName}
+                    onChangeText={setDisplayName}
+                  />
+                </View>
+                
+                <View style={styles.inputGroup}>
+                  <Text style={[styles.inputLabel, { color: colors.text }]}>Phone Number</Text>
+                  <TextInput
+                    style={[styles.input, { 
+                      backgroundColor: isDarkMode ? colors.inputBackground : '#F8F9FA', 
+                      color: colors.text,
+                      borderColor: isDarkMode ? 'rgba(255,255,255,0.15)' : '#DFE2E6'
+                    }]}
+                    placeholder="Enter your phone number"
+                    placeholderTextColor={colors.subText}
+                    value={phoneNumber}
+                    onChangeText={setPhoneNumber}
+                    keyboardType="phone-pad"
+                  />
+                </View>
+                
+                <View style={styles.inputGroup}>
+                  <Text style={[styles.inputLabel, { color: colors.text }]}>Country</Text>
+                  <TextInput
+                    style={[styles.input, { 
+                      backgroundColor: isDarkMode ? colors.inputBackground : '#F8F9FA', 
+                      color: colors.text,
+                      borderColor: isDarkMode ? 'rgba(255,255,255,0.15)' : '#DFE2E6'
+                    }]}
+                    placeholder="Your country"
+                    placeholderTextColor={colors.subText}
+                    value={country}
+                    onChangeText={setCountry}
+                  />
+                </View>
+                
+                <View style={styles.inputGroup}>
+                  <Text style={[styles.inputLabel, { color: colors.text }]}>Gender</Text>
+                  <TextInput
+                    style={[styles.input, { 
+                      backgroundColor: isDarkMode ? colors.inputBackground : '#F8F9FA', 
+                      color: colors.text,
+                      borderColor: isDarkMode ? 'rgba(255,255,255,0.15)' : '#DFE2E6'
+                    }]}
+                    placeholder="Your gender"
+                    placeholderTextColor={colors.subText}
+                    value={gender}
+                    onChangeText={setGender}
+                  />
+                </View>
+                
+                <View style={styles.inputGroup}>
+                  <Text style={[styles.inputLabel, { color: colors.text }]}>Bio</Text>
+                  <TextInput
+                    style={[styles.textArea, { 
+                      backgroundColor: isDarkMode ? colors.inputBackground : '#F8F9FA', 
+                      color: colors.text,
+                      borderColor: isDarkMode ? 'rgba(255,255,255,0.15)' : '#DFE2E6'
+                    }]}
+                    placeholder="Tell us a little about yourself..."
+                    placeholderTextColor={colors.subText}
+                    value={bio}
+                    onChangeText={setBio}
+                    multiline
+                    numberOfLines={4}
+                    textAlignVertical="top"
+                    maxLength={150}
+                  />
+                  <View style={styles.characterCountContainer}>
+                    <Text style={[
+                      styles.characterCount, 
+                      { 
+                        color: bio.length > 120 
+                          ? (bio.length > 140 ? AppColors.danger : '#FF9800') 
+                          : colors.subText 
+                      }
+                    ]}>
+                      {bio.length}/150 characters
+                    </Text>
+                  </View>
+                </View>
               </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={[styles.inputLabel, { color: colors.text }]}>Display Name</Text>
-                <TextInput
-                  style={[styles.input, { 
-                    backgroundColor: isDarkMode ? colors.inputBackground : '#F8F9FA', 
-                    color: colors.text,
-                    borderColor: isDarkMode ? 'rgba(255,255,255,0.15)' : '#DFE2E6'
-                  }]}
-                  placeholder="How should we call you?"
-                  placeholderTextColor={colors.subText}
-                  value={displayName}
-                  onChangeText={setDisplayName}
-                />
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={[styles.inputLabel, { color: colors.text }]}>Phone Number</Text>
-                <TextInput
-                  style={[styles.input, { 
-                    backgroundColor: isDarkMode ? colors.inputBackground : '#F8F9FA', 
-                    color: colors.text,
-                    borderColor: isDarkMode ? 'rgba(255,255,255,0.15)' : '#DFE2E6'
-                  }]}
-                  placeholder="Enter your phone number"
-                  placeholderTextColor={colors.subText}
-                  value={phoneNumber}
-                  onChangeText={setPhoneNumber}
-                  keyboardType="phone-pad"
-                />
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={[styles.inputLabel, { color: colors.text }]}>Country</Text>
-                <TextInput
-                  style={[styles.input, { 
-                    backgroundColor: isDarkMode ? colors.inputBackground : '#F8F9FA', 
-                    color: colors.text,
-                    borderColor: isDarkMode ? 'rgba(255,255,255,0.15)' : '#DFE2E6'
-                  }]}
-                  placeholder="Your country"
-                  placeholderTextColor={colors.subText}
-                  value={country}
-                  onChangeText={setCountry}
-                />
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={[styles.inputLabel, { color: colors.text }]}>Gender</Text>
-                <TextInput
-                  style={[styles.input, { 
-                    backgroundColor: isDarkMode ? colors.inputBackground : '#F8F9FA', 
-                    color: colors.text,
-                    borderColor: isDarkMode ? 'rgba(255,255,255,0.15)' : '#DFE2E6'
-                  }]}
-                  placeholder="Your gender"
-                  placeholderTextColor={colors.subText}
-                  value={gender}
-                  onChangeText={setGender}
-                />
-              </View>
-              
-              <View style={styles.inputGroup}>
-                <Text style={[styles.inputLabel, { color: colors.text }]}>Bio</Text>
-                <TextInput
-                  style={[styles.textArea, { 
-                    backgroundColor: isDarkMode ? colors.inputBackground : '#F8F9FA', 
-                    color: colors.text,
-                    borderColor: isDarkMode ? 'rgba(255,255,255,0.15)' : '#DFE2E6'
-                  }]}
-                  placeholder="Tell us a little about yourself..."
-                  placeholderTextColor={colors.subText}
-                  value={bio}
-                  onChangeText={setBio}
-                  multiline
-                  numberOfLines={4}
-                  textAlignVertical="top"
-                />
-              </View>
-            </View>
+            </>
           </>
         )}
       </ScrollView>
@@ -558,5 +574,13 @@ const styles = StyleSheet.create({
     padding: 12,
     fontSize: 16,
     minHeight: 100,
+  },
+  characterCountContainer: {
+    alignItems: 'flex-end',
+    marginTop: 5,
+  },
+  characterCount: {
+    fontSize: 12,
+    fontStyle: 'italic',
   },
 });

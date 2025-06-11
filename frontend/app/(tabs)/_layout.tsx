@@ -5,6 +5,7 @@ import { Pressable, Text, View } from 'react-native';
 import { useTheme } from '@/components/ThemeProvider';
 import { useClientOnlyValue } from '@/components/useClientOnlyValue';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AlertProvider } from '@/components/AlertProvider';
 
 // New app colors
 export const AppColors = {
@@ -105,30 +106,71 @@ export default function TabLayout() {
   }
 
   return (
-    <Tabs
-      screenOptions={{
-        tabBarActiveTintColor: AppColors.primary,
-        tabBarInactiveTintColor: colors.subText,
-        tabBarStyle: {
-          backgroundColor: colors.cardBackground,
-          borderTopColor: colors.border,
-        },
-        headerStyle: {
-          backgroundColor: isDarkMode ? colors.cardBackground : AppColors.primary,
-        },
-        headerTintColor: isDarkMode ? colors.text : AppColors.white,
-        headerTitleStyle: {
-          fontWeight: 'bold',
-        },
-        headerShown: headerShownValue, // Use the pre-calculated value
-      }}>
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: 'Dashboard',
-          tabBarIcon: ({ color }) => <TabBarIcon name="home" color={color} />,
-          headerRight: () => (
-            <View style={{ flexDirection: 'row' }}>
+    <AlertProvider>
+      <Tabs
+        screenOptions={{
+          tabBarActiveTintColor: AppColors.primary,
+          tabBarInactiveTintColor: colors.subText,
+          tabBarStyle: {
+            backgroundColor: colors.cardBackground,
+            borderTopColor: colors.border,
+          },
+          headerStyle: {
+            backgroundColor: isDarkMode ? colors.cardBackground : AppColors.primary,
+          },
+          headerTintColor: isDarkMode ? colors.text : AppColors.white,
+          headerTitleStyle: {
+            fontWeight: 'bold',
+          },
+          headerShown: headerShownValue, // Use the pre-calculated value
+        }}>
+        <Tabs.Screen
+          name="index"
+          options={{
+            title: 'Dashboard',
+            tabBarIcon: ({ color }) => <TabBarIcon name="home" color={color} />,
+            headerRight: () => (
+              <View style={{ flexDirection: 'row' }}>
+                <Pressable
+                  onPress={() => router.push('/notifications')}
+                  style={({ pressed }) => ({
+                    opacity: pressed ? 0.5 : 1,
+                    position: 'relative',
+                    marginRight: 15,
+                  })}
+                >
+                  <FontAwesome
+                    name="bell"
+                    size={22}
+                    color={isDarkMode ? colors.text : AppColors.white}
+                  />
+                  <NotificationBadge count={notificationCount} />
+                </Pressable>
+                
+                <Pressable
+                  onPress={() => router.push('/settings')}
+                  style={({ pressed }) => ({
+                    opacity: pressed ? 0.5 : 1,
+                    marginRight: 15,
+                  })}
+                >
+                  <FontAwesome
+                    name="cog"
+                    size={22}
+                    color={isDarkMode ? colors.text : AppColors.white}
+                  />
+                </Pressable>
+              </View>
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="two"
+          options={{
+            title: 'Transactions',
+            tabBarIcon: ({ color }) => <TabBarIcon name="money" color={color} />,
+            headerTitle: "Transactions",
+            headerRight: () => (
               <Pressable
                 onPress={() => router.push('/notifications')}
                 style={({ pressed }) => ({
@@ -144,65 +186,26 @@ export default function TabLayout() {
                 />
                 <NotificationBadge count={notificationCount} />
               </Pressable>
-              
-              <Pressable
-                onPress={() => router.push('/settings')}
-                style={({ pressed }) => ({
-                  opacity: pressed ? 0.5 : 1,
-                  marginRight: 15,
-                })}
-              >
-                <FontAwesome
-                  name="cog"
-                  size={22}
-                  color={isDarkMode ? colors.text : AppColors.white}
-                />
-              </Pressable>
-            </View>
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="two"
-        options={{
-          title: 'Transactions',
-          tabBarIcon: ({ color }) => <TabBarIcon name="money" color={color} />,
-          headerTitle: "Transactions",
-          headerRight: () => (
-            <Pressable
-              onPress={() => router.push('/notifications')}
-              style={({ pressed }) => ({
-                opacity: pressed ? 0.5 : 1,
-                position: 'relative',
-                marginRight: 15,
-              })}
-            >
-              <FontAwesome
-                name="bell"
-                size={22}
-                color={isDarkMode ? colors.text : AppColors.white}
-              />
-              <NotificationBadge count={notificationCount} />
-            </Pressable>
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="history"
-        options={{
-          title: 'History',
-          tabBarIcon: ({ color }) => <TabBarIcon name="history" color={color} />,
-          headerTitle: "Transaction History",
-        }}
-      />
-      <Tabs.Screen
-        name="profile"
-        options={{
-          title: 'Profile',
-          tabBarIcon: ({ color }) => <TabBarIcon name="user" color={color} />,
-          headerTitle: "My Profile",
-        }}
-      />
-    </Tabs>
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="history"
+          options={{
+            title: 'History',
+            tabBarIcon: ({ color }) => <TabBarIcon name="history" color={color} />,
+            headerTitle: "Transaction History",
+          }}
+        />
+        <Tabs.Screen
+          name="profile"
+          options={{
+            title: 'Profile',
+            tabBarIcon: ({ color }) => <TabBarIcon name="user" color={color} />,
+            headerTitle: "My Profile",
+          }}
+        />
+      </Tabs>
+    </AlertProvider>
   );
 }

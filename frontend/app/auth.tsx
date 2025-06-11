@@ -7,6 +7,7 @@ import { FontAwesome } from '@expo/vector-icons';
 import { AppColors } from './(tabs)/_layout';
 import { login, register } from '@/services/api';
 import { useTheme } from '@/components/ThemeProvider';
+import { getDeviceIdentifier } from '@/utils/device'; // Import the new device utility
 
 // List of countries
 const COUNTRIES = [
@@ -65,7 +66,8 @@ const ThemedAlert = ({
 
 export default function AuthScreen() {
   const { isDarkMode, colors } = useTheme();
-  const [isLogin, setIsLogin] = useState(true);
+  // Update to include isIPLogin state
+  const [authMode, setAuthMode] = useState('login'); // 'login', 'signup', or 'ipLogin'
   const [showCountryPicker, setShowCountryPicker] = useState(false);
   const [showGenderPicker, setShowGenderPicker] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -96,6 +98,13 @@ export default function AuthScreen() {
     gender: 'Prefer not to say',
   });
   
+  // IP Login form
+  const [ipLoginData, setIpLoginData] = useState({
+    serverIP: '',
+    email: '',
+    password: '',
+  });
+  
   // Form validation 
   const [errors, setErrors] = useState({
     email: '',
@@ -105,6 +114,7 @@ export default function AuthScreen() {
   });
 
   const [statusMessage, setStatusMessage] = useState('');
+  const [rememberDevice, setRememberDevice] = useState(true);
 
   const validateEmail = (email: string) => {
     if (!email.trim()) return 'Email is required';
@@ -297,106 +307,62 @@ export default function AuthScreen() {
     setStatusMessage(`Authenticating ${loginData.email}...`); // Show email in status
     
     try {
-      let response;
+      // Get device ID
+      const deviceId = await getDeviceIdentifier();
       
-      try {
-        // Show sending email message
-        setStatusMessage(`Connecting to server...`);
-        await new Promise(resolve => setTimeout(resolve, 400)); // Brief delay for visual feedback
-        
-        setStatusMessage(`Verifying credentials for ${loginData.email}...`);
-        response = await login(loginData.email, loginData.password);
-        
-        setStatusMessage(`Sending authentication session to ${loginData.email}...`);
-        await new Promise(resolve => setTimeout(resolve, 800)); // Show this message for a moment
-        
-        // Only proceed if we get a valid response with token
-        if (!response.data || !response.data.token) {
-          throw new Error('Invalid response from server');
-        }
-        
-        // Store ALL required auth data in correct sequence
-        await AsyncStorage.multiSet([
-          ['auth_token', response.data.token],
-          ['user_id', response.data.user.id.toString()],
-          ['user_email', loginData.email],
-          ['is_authenticated', 'true'], // CRITICAL: Set this explicitly to 'true'
-          ['is_offline_mode', 'false'], // Set this to false to be explicit
-          ['is_guest_mode', 'false']    // Set this to false to be explicit
-        ]);
-        
-        console.log('Auth data stored successfully');
-        
-        setStatusMessage('Login successful!');
-        
-        // Add a slightly longer delay to ensure storage is complete
-        setTimeout(() => {
-          if (Platform.OS === 'web') {
-            window.location.href = '/'; // Force full page reload on web
-          } else {
-            router.replace('/');
-          }
-        }, 800); // Longer delay to ensure the user sees the success message
-      } catch (apiError: any) {
-        console.error('API Error:', apiError);
-        
-        // Check if this is an authentication error (401)
-        if (apiError.response && apiError.response.status === 401) {
-          // Show invalid credentials error using Alert for immediate visibility
-          setLoading(false);
-          setStatusMessage('');
-          
-          // Use platform-specific approach for alert
-          if (Platform.OS === 'web') {
-            showThemedAlert('Login Failed', 'Invalid email or password. Please check your credentials and try again.');
-          } else {
-            Alert.alert(
-              'Login Failed', 
-              'Invalid email or password. Please check your credentials and try again.'
-            );
-          }
-          return; // Important: Exit early to prevent further processing
-        }
-        
-        // Network errors on Android
-        if (Platform.OS === 'android' && 
-            !apiError.response && 
-            apiError.message && 
-            apiError.message.includes('Network Error')) {
-          
-          console.log('Android login fallback mode - network error only');
-          Alert.alert(
-            'Network Error',
-            'Unable to connect to server. Would you like to use offline mode?',
-            [
-              {
-                text: 'Cancel',
-                style: 'cancel',
-                onPress: () => setLoading(false)
-              },
-              {
-                text: 'Use Offline Mode',
-                onPress: async () => {
-                  // Create and use offline credentials
-                  await AsyncStorage.multiSet([
-                    ['auth_token', 'offline-token'],
-                    ['user_id', 'offline-user'],
-                    ['user_email', loginData.email],
-                    ['is_offline_mode', 'true'],
-                    ['is_authenticated', 'true']
-                  ]);
-                  
-                  router.replace('/');
-                }
-              }
-            ]
-          );
-          return;
-        }
-        
-        // Re-throw for the outer catch block
-        throw apiError;
+      // Show connecting message
+      setStatusMessage(`Connecting to server...`);
+      await new Promise(resolve => setTimeout(resolve, 400));
+      
+      setStatusMessage(`Verifying credentials for ${loginData.email}...`);
+      const response = await login(loginData.email, loginData.password, deviceId);
+      
+      setStatusMessage(`Sending authentication session to ${loginData.email}...`);
+      await new Promise(resolve => setTimeout(resolve, 800)); // Show this message for a moment
+      
+      // Only proceed if we get a valid response with token
+      if (!response.data || !response.data.token) {
+        throw new Error('Invalid response from server');
       }
+      
+      // Create a 30-day expiration timestamp
+      const expirationDate = new Date();
+      expirationDate.setDate(expirationDate.getDate() + 30);
+      const expirationTimestamp = expirationDate.toISOString();
+      
+      // Store ALL required auth data in correct sequence
+      await AsyncStorage.multiSet([
+        ['auth_token', response.data.token],
+        ['user_id', response.data.user.id.toString()],
+        ['user_email', loginData.email],
+        ['is_authenticated', 'true'], // CRITICAL: Set this explicitly to 'true'
+        ['is_offline_mode', 'false'], // Set this to false to be explicit
+        ['is_guest_mode', 'false'],   // Set this to false to be explicit
+        ['auth_expiration', expirationTimestamp] // Add expiration timestamp
+      ]);
+      
+      console.log('Auth data stored successfully');
+      
+      // Log login to history
+      const loginHistory = await AsyncStorage.getItem('login_history') || '[]';
+      const history = JSON.parse(loginHistory);
+      history.push({
+        date: new Date().toISOString(),
+        device: Platform.OS,
+        type: 'login'
+      });
+      await AsyncStorage.setItem('login_history', JSON.stringify(history.slice(-10)));
+      
+      setStatusMessage('Login successful!');
+      
+      // Add a slightly longer delay to ensure storage is complete
+      setTimeout(() => {
+        if (Platform.OS === 'web') {
+          window.location.href = '/'; // Force full page reload on web
+        } else {
+          router.replace('/');
+        }
+      }, 800); // Longer delay to ensure the user sees the success message
     } catch (error) {
       console.error('Login error:', error);
       
@@ -496,6 +462,87 @@ export default function AuthScreen() {
     }
   };
 
+  const handleIPLogin = async () => {
+    // Validate fields
+    if (!ipLoginData.serverIP.trim()) {
+      showThemedAlert('Server Required', 'Please enter your server IP address');
+      return;
+    }
+    
+    if (!ipLoginData.email.trim()) {
+      showThemedAlert('Email Required', 'Please enter your email address');
+      return;
+    }
+    
+    if (!EMAIL_REGEX.test(ipLoginData.email)) {
+      showThemedAlert('Invalid Email', 'Please enter a valid email address');
+      return;
+    }
+    
+    if (!ipLoginData.password) {
+      showThemedAlert('Password Required', 'Please enter your password');
+      return;
+    }
+    
+    setLoading(true);
+    setStatusMessage(`Connecting to ${ipLoginData.serverIP}...`);
+    
+    try {
+      // Show connection progress
+      await new Promise(resolve => setTimeout(resolve, 500));
+      setStatusMessage(`Authenticating with custom server...`);
+      
+      // Here you would implement the actual API call to the custom server
+      // For now, we'll simulate a successful login
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Create a 30-day expiration timestamp
+      const expirationDate = new Date();
+      expirationDate.setDate(expirationDate.getDate() + 30);
+      const expirationTimestamp = expirationDate.toISOString();
+      
+      // Set auth data with expiration
+      await AsyncStorage.multiSet([
+        ['auth_token', 'ip-login-token'],
+        ['user_id', 'ip-user'],
+        ['user_email', ipLoginData.email],
+        ['server_ip', ipLoginData.serverIP],
+        ['is_authenticated', 'true'],
+        ['auth_expiration', expirationTimestamp],
+        ['is_custom_server', 'true']
+      ]);
+      
+      // Log IP login
+      const loginHistory = await AsyncStorage.getItem('login_history') || '[]';
+      const history = JSON.parse(loginHistory);
+      history.push({
+        date: new Date().toISOString(),
+        device: Platform.OS,
+        type: 'login',
+        ip: ipLoginData.serverIP
+      });
+      await AsyncStorage.setItem('login_history', JSON.stringify(history.slice(-10)));
+      
+      setStatusMessage('Login successful!');
+      
+      // Navigate to home
+      setTimeout(() => {
+        if (Platform.OS === 'web') {
+          window.location.href = '/';
+        } else {
+          router.replace('/');
+        }
+      }, 800);
+      
+    } catch (error) {
+      console.error('IP Login error:', error);
+      showThemedAlert('Login Failed', 'Failed to connect to the specified server');
+    } finally {
+      setLoading(false);
+      setStatusMessage('');
+    }
+  };
+
   const handleContinueAsGuest = async () => {
     // Set guest mode flag in AsyncStorage
     await AsyncStorage.setItem('auth_token', 'guest-token');
@@ -521,8 +568,8 @@ export default function AuthScreen() {
   };
 
   const handleForgotPassword = () => {
-    // Navigate to forgot password page
-    router.push('/forgotPassword');
+    // Navigate directly to forgot password page with replace instead of push
+    router.replace('/forgotPassword');
   }
 
   const renderLoginForm = () => (
@@ -594,12 +641,32 @@ export default function AuthScreen() {
         {errors.password ? <Text style={styles.errorText}>{errors.password}</Text> : null}
       </View>
       
-      <TouchableOpacity
-        style={styles.forgotPasswordBtn}
-        onPress={handleForgotPassword}
-      >
-        <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
-      </TouchableOpacity>
+      <View style={styles.rememberForgotContainer}>
+        {/* Left side - Remember Me */}
+        <View style={styles.rememberMeWrapper}>
+          <TouchableOpacity 
+            style={styles.checkbox}
+            onPress={() => setRememberDevice(!rememberDevice)}
+          >
+            <FontAwesome 
+              name={rememberDevice ? "check-square-o" : "square-o"} 
+              size={20} 
+              color={AppColors.primary} 
+            />
+          </TouchableOpacity>
+          <Text style={[styles.rememberMeText, { color: colors.text }]}>
+            Remember me
+          </Text>
+        </View>
+
+        {/* Right side - Forgot Password */}
+        <TouchableOpacity
+          style={styles.forgotPasswordBtn}
+          onPress={handleForgotPassword}
+        >
+          <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+        </TouchableOpacity>
+      </View>
       
       <TouchableOpacity
         style={styles.primaryButton}
@@ -902,6 +969,109 @@ export default function AuthScreen() {
     </View>
   );
 
+  // Add new render function for IP Login form
+  const renderIPLoginForm = () => (
+    <View style={styles.formContainer}>
+      <Text style={[styles.formTitle, { color: colors.text }]}>Custom Server Login</Text>
+      
+      <View style={styles.inputGroup}>
+        <Text style={[styles.inputLabel, { color: colors.text }]}>Server IP Address</Text>
+        <TextInput
+          style={[
+            styles.input, 
+            { 
+              backgroundColor: isDarkMode ? colors.inputBackground : '#F8F9FA', 
+              color: colors.text,
+              borderColor: isDarkMode ? 'rgba(255,255,255,0.15)' : '#DFE2E6'
+            }
+          ]}
+          placeholder="Enter server IP (e.g., 192.168.1.10)"
+          placeholderTextColor={colors.subText}
+          keyboardType="url"
+          autoCapitalize="none"
+          value={ipLoginData.serverIP}
+          onChangeText={(text) => setIpLoginData({...ipLoginData, serverIP: text})}
+        />
+      </View>
+      
+      <View style={styles.inputGroup}>
+        <Text style={[styles.inputLabel, { color: colors.text }]}>Email</Text>
+        <TextInput
+          style={[
+            styles.input, 
+            { 
+              backgroundColor: isDarkMode ? colors.inputBackground : '#F8F9FA', 
+              color: colors.text,
+              borderColor: isDarkMode ? 'rgba(255,255,255,0.15)' : '#DFE2E6'
+            }
+          ]}
+          placeholder="Enter your email"
+          placeholderTextColor={colors.subText}
+          keyboardType="email-address"
+          autoCapitalize="none"
+          value={ipLoginData.email}
+          onChangeText={(text) => setIpLoginData({...ipLoginData, email: text})}
+        />
+      </View>
+      
+      <View style={styles.inputGroup}>
+        <Text style={[styles.inputLabel, { color: colors.text }]}>Password</Text>
+        <View style={styles.passwordContainer}>
+          <TextInput
+            style={[
+              styles.passwordInput, 
+              { 
+                backgroundColor: isDarkMode ? colors.inputBackground : '#F8F9FA', 
+                color: colors.text,
+                borderColor: isDarkMode ? 'rgba(255,255,255,0.15)' : '#DFE2E6'
+              }
+            ]}
+            placeholder="Enter your password"
+            placeholderTextColor={colors.subText}
+            secureTextEntry={!showLoginPassword}
+            value={ipLoginData.password}
+            onChangeText={(text) => setIpLoginData({...ipLoginData, password: text})}
+          />
+          <TouchableOpacity 
+            style={styles.eyeIcon} 
+            onPress={() => setShowLoginPassword(!showLoginPassword)}
+          >
+            <FontAwesome 
+              name={showLoginPassword ? "eye" : "eye-slash"} 
+              size={20} 
+              color={colors.subText} 
+            />
+          </TouchableOpacity>
+        </View>
+      </View>
+      
+      {statusMessage ? (
+        <View style={[styles.statusContainer, { 
+          backgroundColor: isDarkMode ? 'rgba(39, 174, 96, 0.2)' : 'rgba(39, 174, 96, 0.1)'
+        }]}>
+          <ActivityIndicator size="small" color={AppColors.primary} />
+          <Text style={styles.statusMessage}>{statusMessage}</Text>
+        </View>
+      ) : null}
+      
+      <TouchableOpacity
+        style={styles.primaryButton}
+        onPress={handleIPLogin}
+        disabled={loading}
+      >
+        {loading ? (
+          <ActivityIndicator color="#fff" size="small" />
+        ) : (
+          <Text style={styles.primaryButtonText}>Connect to Server</Text>
+        )}
+      </TouchableOpacity>
+      
+      <Text style={[styles.termsText, { color: colors.subText }]}>
+        Session will remain active for 30 days after successful authentication.
+      </Text>
+    </View>
+  );
+
   // Show themed alert function
   const showThemedAlert = (title: string, message: string) => {
     setAlertTitle(title);
@@ -909,6 +1079,7 @@ export default function AuthScreen() {
     setAlertVisible(true);
   };
 
+  // Update the return statement to include the new tab
   return (
     <View style={[styles.container, { backgroundColor: AppColors.secondary }]}>
       <StatusBar style="light" />
@@ -921,19 +1092,58 @@ export default function AuthScreen() {
         <Text style={styles.appName}>CaptainLedger</Text>
       </View>
       
-      <View style={styles.tabs}>
-        <TouchableOpacity 
-          style={[styles.tab, isLogin && styles.activeTab]}
-          onPress={() => setIsLogin(true)}
-        >
-          <Text style={[styles.tabText, isLogin && styles.activeTabText]}>Login</Text>
-        </TouchableOpacity>
-        <TouchableOpacity 
-          style={[styles.tab, !isLogin && styles.activeTab]}
-          onPress={() => setIsLogin(false)}
-        >
-          <Text style={[styles.tabText, !isLogin && styles.activeTabText]}>Sign Up</Text>
-        </TouchableOpacity>
+      <View style={styles.tabsContainer}>
+        <View style={styles.tabs}>
+          <TouchableOpacity 
+            style={[
+              styles.tab,
+              authMode === 'login' && styles.activeTab,
+              { borderTopLeftRadius: 12, borderBottomLeftRadius: 12 }
+            ]}
+            onPress={() => setAuthMode('login')}
+          >
+            <FontAwesome 
+              name="sign-in" 
+              size={16} 
+              color={authMode === 'login' ? '#FFFFFF' : 'rgba(255, 255, 255, 0.7)'} 
+              style={styles.tabIcon}
+            />
+            <Text style={[styles.tabText, authMode === 'login' && styles.activeTabText]}>Login</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={[
+              styles.tab,
+              authMode === 'signup' && styles.activeTab,
+            ]}
+            onPress={() => setAuthMode('signup')}
+          >
+            <FontAwesome 
+              name="user-plus" 
+              size={16} 
+              color={authMode === 'signup' ? '#FFFFFF' : 'rgba(255, 255, 255, 0.7)'} 
+              style={styles.tabIcon}
+            />
+            <Text style={[styles.tabText, authMode === 'signup' && styles.activeTabText]}>Sign Up</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={[
+              styles.tab,
+              authMode === 'ipLogin' && styles.activeTab,
+              { borderTopRightRadius: 12, borderBottomRightRadius: 12 }
+            ]}
+            onPress={() => setAuthMode('ipLogin')}
+          >
+            <FontAwesome 
+              name="server" 
+              size={16} 
+              color={authMode === 'ipLogin' ? '#FFFFFF' : 'rgba(255, 255, 255, 0.7)'} 
+              style={styles.tabIcon}
+            />
+            <Text style={[styles.tabText, authMode === 'ipLogin' && styles.activeTabText]}>IP Login</Text>
+          </TouchableOpacity>
+        </View>
       </View>
       
       <ScrollView 
@@ -941,30 +1151,35 @@ export default function AuthScreen() {
         contentContainerStyle={styles.scrollViewContent}
         keyboardShouldPersistTaps="handled"
       >
-        {isLogin ? renderLoginForm() : renderSignupForm()}
+        {authMode === 'login' && renderLoginForm()}
+        {authMode === 'signup' && renderSignupForm()}
+        {authMode === 'ipLogin' && renderIPLoginForm()}
         
-        <View style={styles.divider}>
-          <View style={[styles.dividerLine, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.1)' : '#DFE2E6' }]} />
-          <Text style={[styles.dividerText, { color: colors.subText }]}>OR</Text>
-          <View style={[styles.dividerLine, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.1)' : '#DFE2E6' }]} />
-        </View>
-        
-        <TouchableOpacity
-          style={[styles.guestButton, { borderColor: AppColors.primary }]}
-          onPress={handleContinueAsGuest}
-        >
-          <Text style={styles.guestButtonText}>Continue as Guest</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={styles.docsButton}
-          onPress={() => navigateToPage('/documentation')}
-        >
-          <Text style={styles.docsButtonText}>Read Documentation</Text>
-        </TouchableOpacity>
+        {authMode !== 'ipLogin' && (
+          <>
+            <View style={styles.divider}>
+              <View style={[styles.dividerLine, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.1)' : '#DFE2E6' }]} />
+              <Text style={[styles.dividerText, { color: colors.subText }]}>OR</Text>
+              <View style={[styles.dividerLine, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.1)' : '#DFE2E6' }]} />
+            </View>
+            
+            <TouchableOpacity
+              style={[styles.guestButton, { borderColor: AppColors.primary }]}
+              onPress={handleContinueAsGuest}
+            >
+              <Text style={styles.guestButtonText}>Continue as Guest</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={styles.docsButton}
+              onPress={() => navigateToPage('/documentation')}
+            >
+              <Text style={styles.docsButtonText}>Read Documentation</Text>
+            </TouchableOpacity>
+          </>
+        )}
       </ScrollView>
       
-      {/* Add the themed alert */}
       <ThemedAlert
         visible={alertVisible}
         title={alertTitle}
@@ -997,29 +1212,51 @@ const styles = StyleSheet.create({
     color: AppColors.white,
     marginTop: 10,
   },
+  tabsContainer: {
+    paddingHorizontal: 20,
+    marginBottom: 24,
+  },
   tabs: {
     flexDirection: 'row',
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 8,
-    marginHorizontal: 20,
-    marginBottom: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 12,
+    padding: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 6,
   },
   tab: {
     flex: 1,
-    paddingVertical: 12,
+    paddingVertical: 14,
+    flexDirection: 'row',
     alignItems: 'center',
+  
+    justifyContent: 'center',
+    position: 'relative',
+    borderRadius: 10,
   },
   activeTab: {
     backgroundColor: AppColors.primary,
-    borderRadius: 8,
+    shadowColor: AppColors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 8,
   },
   tabText: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: 'rgba(255, 255, 255, 0.7)',
+    fontSize: 15,
+    fontWeight: '600',
+    color: 'rgba(255, 255, 255, 0.85)',
+    marginLeft: 6,
   },
   activeTabText: {
-    color: AppColors.white,
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  tabIcon: {
+    marginRight: 6,
   },
   scrollView: {
     flex: 1,
@@ -1138,8 +1375,6 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   forgotPasswordBtn: {
-    alignSelf: 'flex-end',
-    marginBottom: 20,
   },
   forgotPasswordText: {
     color: AppColors.primary,
@@ -1262,5 +1497,26 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginLeft: 10,
     fontWeight: '500',
+  },
+  rememberMeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  checkbox: {
+    marginRight: 10,
+  },
+  rememberMeText: {
+    fontSize: 14,
+  },
+  rememberForgotContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  rememberMeWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
 });

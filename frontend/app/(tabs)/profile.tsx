@@ -586,6 +586,15 @@ export default function ProfileScreen() {
           </TouchableOpacity>
           
           <TouchableOpacity 
+            style={[styles.actionButton, { borderBottomColor: colors.border, backgroundColor: 'transparent' }]}
+            onPress={() => router.push('/categoryManagement')}
+          >
+            <FontAwesome name="tags" size={18} color={AppColors.secondary} style={styles.actionIcon} />
+            <Text style={[styles.actionText, { color: colors.text, flex: 1 }]}>Manage Categories</Text>
+            <FontAwesome name="chevron-right" size={16} color={colors.subText} />
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
             style={[styles.actionButton, { backgroundColor: 'transparent' }]}
             onPress={() => Alert.alert('About', 'CaptainLedger v1.0.0\n\nA privacy-focused finance tracker.')}
           >

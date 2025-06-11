@@ -103,24 +103,33 @@ function RootLayoutNav() {
       // Get auth token - most important item
       const authToken = await AsyncStorage.getItem('auth_token');
       const isAuthenticated = await AsyncStorage.getItem('is_authenticated');
+      const authExpiration = await AsyncStorage.getItem('auth_expiration');
       
-      // Basic check - if no token and no authenticated flag, don't proceed with complex checks
-      if (!authToken && isAuthenticated !== 'true') {
-        console.log('No auth token and not authenticated - clear state');
-        setAuthState({
-          isAuthenticated: false,
-          isLoading: false,
-          user: null
-        });
-        setCheckedOnboarding(true);
-        return;
+      // Check if token is expired (for IP login with 30-day persistence)
+      let tokenExpired = false;
+      if (authExpiration) {
+        const expirationDate = new Date(authExpiration);
+        const now = new Date();
+        tokenExpired = now > expirationDate;
+        
+        if (tokenExpired) {
+          console.log('Auth token has expired');
+          // Clear expired auth data
+          await AsyncStorage.multiRemove([
+            'auth_token', 'user_id', 'user_email', 'is_authenticated', 
+            'auth_expiration', 'server_ip', 'is_custom_server'
+          ]);
+        }
       }
       
-      // More robust check for valid auth
       const isValidToken = Boolean(
-        (authToken && authToken !== 'null' && authToken !== 'undefined') ||
-        authToken === 'offline-token' ||
-        authToken === 'guest-token'
+        authToken && 
+        !tokenExpired &&
+        (authToken !== 'invalid-token') &&
+        (authToken !== '') &&
+        (authToken === 'ip-login-token' || 
+         authToken === 'offline-token' ||
+         authToken === 'guest-token')
       );
       
       const isExplicitlyAuthenticated = isAuthenticated === 'true';

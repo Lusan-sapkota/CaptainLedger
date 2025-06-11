@@ -87,14 +87,14 @@ export default function LoginHistoryScreen() {
     }
   };
 
-  const getBadgeStyle = (type: string): { color: string; backgroundColor: string; icon: string } => {
+  const getBadgeStyle = (type: string): { color: string; backgroundColor: string; icon: React.ComponentProps<typeof FontAwesome>['name'] } => {
     switch (type) {
       case 'login':
         return { color: 'white', backgroundColor: AppColors.primary, icon: 'sign-in' };
       case 'logout':
         return { color: 'white', backgroundColor: AppColors.danger, icon: 'sign-out' };
       case 'signup':
-        return { color: 'white', backgroundColor: AppColors.lightGreen, icon: 'user-plus' };
+        return { color: 'white', backgroundColor: AppColors.primary, icon: 'user-plus' };
       case 'guest':
         return { color: 'white', backgroundColor: AppColors.secondary, icon: 'user-secret' };
       default:
