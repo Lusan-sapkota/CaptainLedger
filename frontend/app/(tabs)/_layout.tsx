@@ -6,6 +6,7 @@ import { useTheme } from '@/components/ThemeProvider';
 import { useClientOnlyValue } from '@/components/useClientOnlyValue';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AlertProvider } from '@/components/AlertProvider';
+import Sidebar from '@/components/Sidebar';
 
 // New app colors
 export const AppColors = {
@@ -16,6 +17,7 @@ export const AppColors = {
   darkGreen: '#1E8449',  // Dark version of primary
   lightText: '#7F8C8D',  // For secondary text
   danger: '#E74C3C',     // For errors, negative amounts
+  warning: '#F39C12',   // For warnings, alerts
 };
 
 // You can explore the built-in icon families and icons on the web at https://icons.expo.fyi/
@@ -59,6 +61,7 @@ export default function TabLayout() {
   const router = useRouter();
   const [notificationCount, setNotificationCount] = useState(2);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const [sidebarVisible, setSidebarVisible] = useState(false);
   
   // Move this hook BEFORE any conditional returns to maintain hooks order consistency
   const headerShownValue = useClientOnlyValue(false, true);
@@ -69,40 +72,35 @@ export default function TabLayout() {
       try {
         const authToken = await AsyncStorage.getItem('auth_token');
         const isAuthenticatedFlag = await AsyncStorage.getItem('is_authenticated');
+        const userId = await AsyncStorage.getItem('user_id');
         
-        // More robust check
-        const isAuth = Boolean(
-          (isAuthenticatedFlag === 'true' || authToken) &&
-          authToken !== 'null' &&
-          authToken !== 'undefined' &&
-          authToken !== null &&
-          authToken !== undefined &&
-          authToken !== ''
-        );
+        const hasValidToken = Boolean(authToken && authToken !== 'null' && authToken !== 'undefined');
+        const isExplicitlyAuthenticated = isAuthenticatedFlag === 'true';
+        const hasUserData = Boolean(userId);
         
-        console.log('TabLayout - Auth check:', isAuth ? 'authenticated' : 'not authenticated');
-        console.log('TabLayout - Auth token:', authToken);
-        console.log('TabLayout - Is authenticated flag:', isAuthenticatedFlag);
+        const isUserAuthenticated = hasValidToken && (isExplicitlyAuthenticated || hasUserData);
         
-        setIsAuthenticated(isAuth);
+        setIsAuthenticated(isUserAuthenticated);
+        
+        if (!isUserAuthenticated) {
+          router.replace('/auth');
+        }
       } catch (error) {
-        console.error('Error checking auth in TabLayout:', error);
+        console.error('Auth check error:', error);
         setIsAuthenticated(false);
+        router.replace('/auth');
       }
     };
-    
+
     checkAuth();
   }, []);
 
-  // If auth state is still being determined, return null
   if (isAuthenticated === null) {
-    return null;
+    return null; // Loading state
   }
-  
-  // Don't render tabs at all if not authenticated
-  if (isAuthenticated === false) {
-    console.log('TabLayout - Not authenticated, not rendering tabs');
-    return null;
+
+  if (!isAuthenticated) {
+    return null; // Will redirect to login
   }
 
   return (
@@ -110,33 +108,57 @@ export default function TabLayout() {
       <Tabs
         screenOptions={{
           tabBarActiveTintColor: AppColors.primary,
-          tabBarInactiveTintColor: colors.subText,
+          tabBarInactiveTintColor: isDarkMode ? colors.subText : AppColors.lightText,
           tabBarStyle: {
             backgroundColor: colors.cardBackground,
-            borderTopColor: colors.border,
+            borderTopColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+            paddingTop: 5,
+            height: 60,
           },
           headerStyle: {
-            backgroundColor: isDarkMode ? colors.cardBackground : AppColors.primary,
+            backgroundColor: isDarkMode ? colors.cardBackground : AppColors.secondary,
           },
           headerTintColor: isDarkMode ? colors.text : AppColors.white,
           headerTitleStyle: {
             fontWeight: 'bold',
           },
-          headerShown: headerShownValue, // Use the pre-calculated value
+          headerShown: headerShownValue,
         }}>
         <Tabs.Screen
           name="index"
           options={{
             title: 'Dashboard',
             tabBarIcon: ({ color }) => <TabBarIcon name="home" color={color} />,
+            headerLeft: () => (
+              <Pressable
+                onPress={() => setSidebarVisible(true)}
+                style={({ pressed }) => ({
+                  opacity: pressed ? 0.5 : 1,
+                  marginLeft: 20, // Increased margin from 15 to 20
+                  marginRight: 15, // Add right margin for spacing from title
+                  padding: 8, // Add padding for better touch area
+                  borderRadius: 8, // Add subtle border radius
+                  backgroundColor: pressed ? 'rgba(255,255,255,0.1)' : 'transparent',
+                })}
+              >
+                <FontAwesome
+                  name="bars"
+                  size={22}
+                  color={isDarkMode ? colors.text : AppColors.white}
+                />
+              </Pressable>
+            ),
             headerRight: () => (
-              <View style={{ flexDirection: 'row' }}>
+              <View style={{ flexDirection: 'row', marginRight: 10 }}>
                 <Pressable
                   onPress={() => router.push('/notifications')}
                   style={({ pressed }) => ({
                     opacity: pressed ? 0.5 : 1,
                     position: 'relative',
                     marginRight: 15,
+                    padding: 8,
+                    borderRadius: 8,
+                    backgroundColor: pressed ? 'rgba(255,255,255,0.1)' : 'transparent',
                   })}
                 >
                   <FontAwesome
@@ -151,7 +173,10 @@ export default function TabLayout() {
                   onPress={() => router.push('/settings')}
                   style={({ pressed }) => ({
                     opacity: pressed ? 0.5 : 1,
-                    marginRight: 15,
+                    marginRight: 10,
+                    padding: 8,
+                    borderRadius: 8,
+                    backgroundColor: pressed ? 'rgba(255,255,255,0.1)' : 'transparent',
                   })}
                 >
                   <FontAwesome
@@ -170,13 +195,35 @@ export default function TabLayout() {
             title: 'Transactions',
             tabBarIcon: ({ color }) => <TabBarIcon name="money" color={color} />,
             headerTitle: "Transactions",
+            headerLeft: () => (
+              <Pressable
+                onPress={() => setSidebarVisible(true)}
+                style={({ pressed }) => ({
+                  opacity: pressed ? 0.5 : 1,
+                  marginLeft: 20,
+                  marginRight: 15,
+                  padding: 8,
+                  borderRadius: 8,
+                  backgroundColor: pressed ? 'rgba(255,255,255,0.1)' : 'transparent',
+                })}
+              >
+                <FontAwesome
+                  name="bars"
+                  size={22}
+                  color={isDarkMode ? colors.text : AppColors.white}
+                />
+              </Pressable>
+            ),
             headerRight: () => (
               <Pressable
                 onPress={() => router.push('/notifications')}
                 style={({ pressed }) => ({
                   opacity: pressed ? 0.5 : 1,
                   position: 'relative',
-                  marginRight: 15,
+                  marginRight: 20,
+                  padding: 8,
+                  borderRadius: 8,
+                  backgroundColor: pressed ? 'rgba(255,255,255,0.1)' : 'transparent',
                 })}
               >
                 <FontAwesome
@@ -195,6 +242,25 @@ export default function TabLayout() {
             title: 'History',
             tabBarIcon: ({ color }) => <TabBarIcon name="history" color={color} />,
             headerTitle: "Transaction History",
+            headerLeft: () => (
+              <Pressable
+                onPress={() => setSidebarVisible(true)}
+                style={({ pressed }) => ({
+                  opacity: pressed ? 0.5 : 1,
+                  marginLeft: 20,
+                  marginRight: 15,
+                  padding: 8,
+                  borderRadius: 8,
+                  backgroundColor: pressed ? 'rgba(255,255,255,0.1)' : 'transparent',
+                })}
+              >
+                <FontAwesome
+                  name="bars"
+                  size={22}
+                  color={isDarkMode ? colors.text : AppColors.white}
+                />
+              </Pressable>
+            ),
           }}
         />
         <Tabs.Screen
@@ -203,9 +269,34 @@ export default function TabLayout() {
             title: 'Profile',
             tabBarIcon: ({ color }) => <TabBarIcon name="user" color={color} />,
             headerTitle: "My Profile",
+            headerLeft: () => (
+              <Pressable
+                onPress={() => setSidebarVisible(true)}
+                style={({ pressed }) => ({
+                  opacity: pressed ? 0.5 : 1,
+                  marginLeft: 20,
+                  marginRight: 15,
+                  padding: 8,
+                  borderRadius: 8,
+                  backgroundColor: pressed ? 'rgba(255,255,255,0.1)' : 'transparent',
+                })}
+              >
+                <FontAwesome
+                  name="bars"
+                  size={22}
+                  color={isDarkMode ? colors.text : AppColors.white}
+                />
+              </Pressable>
+            ),
           }}
         />
       </Tabs>
+      
+      {/* Sidebar Component */}
+      <Sidebar 
+        visible={sidebarVisible} 
+        onClose={() => setSidebarVisible(false)} 
+      />
     </AlertProvider>
   );
 }

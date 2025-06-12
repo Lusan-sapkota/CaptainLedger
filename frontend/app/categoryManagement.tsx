@@ -37,6 +37,14 @@ export default function CategoryManagementScreen() {
   const [activeTab, setActiveTab] = useState<'income' | 'expense'>(initialCategoryType);
   const [isEditing, setIsEditing] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
+  const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
+  const [categoryToDelete, setCategoryToDelete] = useState<Category | null>(null);
+  const [showEditConfirmModal, setShowEditConfirmModal] = useState(false);
+  const [editChanges, setEditChanges] = useState<{
+    name: { old: string, new: string },
+    color: { old: string, new: string },
+    type: { old: string, new: string }
+  } | null>(null);
   
   // Predefined colors for category selection
   const CATEGORY_COLORS = [
@@ -116,12 +124,21 @@ export default function CategoryManagementScreen() {
     }
   };
 
-  const handleDeleteCategory = async (categoryName: string) => {
+  const confirmDeleteCategory = (item: Category) => {
+    setCategoryToDelete(item);
+    setShowDeleteConfirmModal(true);
+  };
+
+  const handleDeleteCategory = async () => {
+    if (!categoryToDelete) return;
+    
     try {
-      await deleteCategory(categoryName);
-      const updatedCategories = categories.filter(c => c.name !== categoryName);
+      await deleteCategory(categoryToDelete.name);
+      const updatedCategories = categories.filter(c => c.name !== categoryToDelete.name);
       setCategories(updatedCategories);
       showAlert('Success', 'Category deleted successfully', 'success');
+      setShowDeleteConfirmModal(false);
+      setCategoryToDelete(null);
     } catch (error) {
       console.error('Error deleting category:', error);
       showAlert('Error', 'Failed to delete category', 'error');
@@ -137,20 +154,32 @@ export default function CategoryManagementScreen() {
     setShowCategoryModal(true);
   };
 
-  // Add this function to handle updating categories
-  const handleUpdateCategory = async () => {
+  const prepareUpdateCategory = () => {
     if (!newCategoryName.trim() || !editingCategory) {
       showAlert('Error', 'Category name is required', 'error');
       return;
     }
+    
+    // Create changes object to display in confirmation
+    setEditChanges({
+      name: { old: editingCategory.name, new: newCategoryName.trim() },
+      color: { old: editingCategory.color, new: selectedCategoryColor },
+      type: { old: editingCategory.type, new: categoryType }
+    });
+    
+    setShowEditConfirmModal(true);
+  };
 
+  const handleUpdateCategory = async () => {
+    if (!editingCategory || !editChanges) return;
+    
     setLoading(true);
     try {
       // Create the updated category object
       const updatedCategory = {
-        name: newCategoryName.trim(),
-        color: selectedCategoryColor,
-        type: categoryType
+        name: editChanges.name.new,
+        color: editChanges.color.new,
+        type: editChanges.type.new as 'income' | 'expense'
       };
       
       // Call the API to update the category
@@ -166,12 +195,10 @@ export default function CategoryManagementScreen() {
       
       setCategories(updatedCategories);
       
-      // Reset form
-      setNewCategoryName('');
-      setSelectedCategoryColor('#FF5722');
-      setShowCategoryModal(false);
-      setIsEditing(false);
-      setEditingCategory(null);
+      // Reset form and states
+      resetModal();
+      setShowEditConfirmModal(false);
+      setEditChanges(null);
       
       showAlert('Success', 'Category updated successfully', 'success');
     } catch (error) {
@@ -213,7 +240,7 @@ export default function CategoryManagementScreen() {
         </TouchableOpacity>
         <TouchableOpacity 
           style={styles.deleteButton}
-          onPress={() => handleDeleteCategory(item.name)}
+          onPress={() => confirmDeleteCategory(item)}
         >
           <FontAwesome name="trash" size={16} color={AppColors.danger} />
         </TouchableOpacity>
@@ -404,7 +431,7 @@ export default function CategoryManagementScreen() {
                   styles.button, 
                   { backgroundColor: categoryType === 'income' ? AppColors.primary : AppColors.danger }
                 ]}
-                onPress={isEditing ? handleUpdateCategory : handleAddCategory}
+                onPress={isEditing ? prepareUpdateCategory : handleAddCategory}
               >
                 <Text style={{ color: '#fff' }}>{isEditing ? 'Update Category' : 'Add Category'}</Text>
               </TouchableOpacity>
@@ -412,6 +439,208 @@ export default function CategoryManagementScreen() {
           </View>
         </View>
       </Modal>
+      
+      {/* Delete Confirmation Modal */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={showDeleteConfirmModal}
+        onRequestClose={() => setShowDeleteConfirmModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.confirmModalContent, { backgroundColor: colors.cardBackground }]}>
+            <View style={styles.confirmModalHeader}>
+              <Text style={[styles.confirmModalTitle, { color: colors.text }]}>
+                Delete Category
+              </Text>
+            </View>
+            
+            <View style={styles.confirmModalBody}>
+              <Text style={[styles.confirmModalText, { color: colors.text }]}>
+                Are you sure you want to delete this category?
+              </Text>
+              
+              {categoryToDelete && (
+                <View style={[styles.categoryPreviewCard, { 
+                  backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
+                  borderColor: categoryToDelete.type === 'income' ? AppColors.primary : AppColors.danger,
+                  borderWidth: 1,
+                  marginVertical: 15,
+                  padding: 15,
+                  borderRadius: 8
+                }]}>
+                  <View style={[styles.categoryItemIcon, { 
+                    backgroundColor: categoryToDelete.color,
+                    alignSelf: 'center',
+                    marginBottom: 10
+                  }]}>
+                    <FontAwesome name="tag" size={16} color="#fff" />
+                  </View>
+                  <Text style={[styles.categoryName, { 
+                    color: colors.text,
+                    textAlign: 'center'
+                  }]}>
+                    {categoryToDelete.name}
+                  </Text>
+                  <Text style={[styles.categoryType, { 
+                    color: categoryToDelete.type === 'income' ? AppColors.primary : AppColors.danger,
+                    textAlign: 'center'
+                  }]}>
+                    {categoryToDelete.type === 'income' ? 'Income' : 'Expense'} Category
+                  </Text>
+                </View>
+              )}
+              
+              <Text style={[styles.confirmWarning, { color: AppColors.danger }]}>
+                This action cannot be undone. Any transactions using this category will need to be updated.
+              </Text>
+            </View>
+            
+            <View style={styles.confirmModalActions}>
+              <TouchableOpacity 
+                style={[styles.confirmModalButton, { 
+                  backgroundColor: 'transparent',
+                  borderWidth: 1,
+                  borderColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'
+                }]}
+                onPress={() => setShowDeleteConfirmModal(false)}
+              >
+                <Text style={{ color: colors.text }}>Cancel</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={[styles.confirmModalButton, { backgroundColor: AppColors.danger }]}
+                onPress={handleDeleteCategory}
+              >
+                <Text style={{ color: '#fff' }}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Edit Confirmation Modal */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={showEditConfirmModal}
+        onRequestClose={() => setShowEditConfirmModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.confirmModalContent, { backgroundColor: colors.cardBackground }]}>
+            <View style={styles.confirmModalHeader}>
+              <Text style={[styles.confirmModalTitle, { color: colors.text }]}>
+                Confirm Changes
+              </Text>
+            </View>
+            
+            <View style={styles.confirmModalBody}>
+              <Text style={[styles.confirmModalText, { color: colors.text }]}>
+                Review the changes you're about to make:
+              </Text>
+              
+              {editChanges && (
+                <View style={[styles.changesContainer, { marginVertical: 15 }]}>
+                  {/* Name changes */}
+                  <View style={styles.changeRow}>
+                    <Text style={[styles.changeLabel, { color: colors.text }]}>Name:</Text>
+                    <View style={styles.changeValues}>
+                      <Text style={[styles.oldValue, { color: isDarkMode ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.7)' }]}>
+                        {editChanges.name.old}
+                      </Text>
+                      <FontAwesome name="arrow-right" size={12} color={isDarkMode ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)'} style={{ marginHorizontal: 5 }} />
+                      <Text style={[styles.newValue, { color: colors.text, fontWeight: '600' }]}>
+                        {editChanges.name.new}
+                      </Text>
+                    </View>
+                  </View>
+                  
+                  {/* Color changes */}
+                  <View style={styles.changeRow}>
+                    <Text style={[styles.changeLabel, { color: colors.text }]}>Color:</Text>
+                    <View style={styles.changeValues}>
+                      <View style={[styles.colorPreview, { backgroundColor: editChanges.color.old }]} />
+                      <FontAwesome name="arrow-right" size={12} color={isDarkMode ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)'} style={{ marginHorizontal: 5 }} />
+                      <View style={[styles.colorPreview, { backgroundColor: editChanges.color.new }]} />
+                    </View>
+                  </View>
+                  
+                  {/* Type changes */}
+                  <View style={styles.changeRow}>
+                    <Text style={[styles.changeLabel, { color: colors.text }]}>Type:</Text>
+                    <View style={styles.changeValues}>
+                      <Text style={[
+                        styles.oldValue, 
+                        { 
+                          color: editChanges.type.old === 'income' ? AppColors.primary : AppColors.danger
+                        }
+                      ]}>
+                        {editChanges.type.old === 'income' ? 'Income' : 'Expense'}
+                      </Text>
+                      <FontAwesome name="arrow-right" size={12} color={isDarkMode ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)'} style={{ marginHorizontal: 5 }} />
+                      <Text style={[
+                        styles.newValue, 
+                        { 
+                          color: editChanges.type.new === 'income' ? AppColors.primary : AppColors.danger,
+                          fontWeight: '600'
+                        }
+                      ]}>
+                        {editChanges.type.new === 'income' ? 'Income' : 'Expense'}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              )}
+              
+              {editChanges?.type.old !== editChanges?.type.new && (
+                <Text style={[styles.typeChangeWarning, { color: AppColors.warning }]}>
+                  Note: Changing a category type may affect how transactions are categorized in reports.
+                </Text>
+              )}
+            </View>
+            
+            <View style={styles.confirmModalActions}>
+              <TouchableOpacity 
+                style={[styles.confirmModalButton, { 
+                  backgroundColor: 'transparent',
+                  borderWidth: 1,
+                  borderColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'
+                }]}
+                onPress={() => setShowEditConfirmModal(false)}
+              >
+                <Text style={{ color: colors.text }}>Cancel</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={[styles.confirmModalButton, { 
+                  backgroundColor: editChanges?.type.new === 'income' ? AppColors.primary : AppColors.danger 
+                }]}
+                onPress={handleUpdateCategory}
+              >
+                <Text style={{ color: '#fff' }}>Save Changes</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+      
+      {/* Floating Action Button for adding new category */}
+      <TouchableOpacity 
+        style={[
+          styles.floatingAddButton, 
+          { backgroundColor: activeTab === 'income' ? AppColors.primary : AppColors.danger }
+        ]}
+        onPress={() => {
+          setCategoryType(activeTab);
+          setNewCategoryName('');
+          setSelectedCategoryColor('#FF5722');
+          setIsEditing(false);
+          setEditingCategory(null);
+          setShowCategoryModal(true);
+        }}
+      >
+        <FontAwesome name="plus" size={24} color="white" />
+      </TouchableOpacity>
     </SafeAreaView>
   );
 }
@@ -419,7 +648,8 @@ export default function CategoryManagementScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 16,
+    paddingTop: 16,
+    paddingHorizontal: 8, // Add horizontal padding to the container
   },
   header: {
     flexDirection: 'row',
@@ -442,15 +672,18 @@ const styles = StyleSheet.create({
   },
   typeToggle: {
     flexDirection: 'row',
-    marginBottom: 15,
-    borderRadius: 8,
+    marginBottom: 20,
+    borderRadius: 12,
     overflow: 'hidden',
+    marginHorizontal: 20,
+    gap: 8, // Add gap between buttons
   },
   typeButton: {
     flex: 1,
-    padding: 12,
+    padding: 16,
     alignItems: 'center',
     justifyContent: 'center',
+    borderRadius: 8, // Add border radius to individual buttons
   },
   typeButtonText: {
     color: '#fff',
@@ -474,6 +707,8 @@ const styles = StyleSheet.create({
   },
   list: {
     paddingBottom: 20,
+    paddingHorizontal: 12, // Add horizontal padding to the list
+    paddingTop: 8, // Add top padding
   },
   categoryItem: {
     width: '47%',
@@ -539,6 +774,11 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: 'bold',
   },
+  confirmText: {
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
   inputLabel: {
     fontSize: 14,
     fontWeight: '500',
@@ -589,5 +829,107 @@ const styles = StyleSheet.create({
   emptyButtonText: {
     color: 'white',
     fontWeight: '500',
-  }
+  },
+  floatingAddButton: {
+    position: 'absolute',
+    right: 20,
+    bottom: 20,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+    zIndex: 100
+  },
+  editChangesContainer: {
+    marginBottom: 15,
+  },
+  changeText: {
+    fontSize: 14,
+    marginBottom: 5,
+  },
+  confirmModalContent: {
+    width: '90%',
+    maxWidth: 400,
+    borderRadius: 15,
+    padding: 20,
+  },
+  confirmModalHeader: {
+    marginBottom: 20,
+  },
+  confirmModalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  confirmModalBody: {
+    marginBottom: 20,
+  },
+  confirmModalText: {
+    fontSize: 16,
+    lineHeight: 22,
+  },
+  confirmWarning: {
+    fontSize: 14,
+    marginTop: 15,
+    fontStyle: 'italic',
+  },
+  confirmModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  confirmModalButton: {
+    width: '48%',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  categoryPreviewCard: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  changesContainer: {
+    backgroundColor: 'transparent',
+  },
+  changeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0,0,0,0.1)',
+  },
+  changeLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    width: '20%',
+  },
+  changeValues: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  oldValue: {
+    fontSize: 14,
+  },
+  newValue: {
+    fontSize: 14,
+  },
+  colorPreview: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.1)',
+  },
+  typeChangeWarning: {
+    fontSize: 14,
+    fontStyle: 'italic',
+  },
 });

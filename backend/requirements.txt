@@ -7,3 +7,7 @@ SQLAlchemy
 Werkzeug
 python-dotenv
 requests
+apscheduler
+flask-socketio
+eventlet
+reportlab

@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, current_app
+from flask import Blueprint, request, jsonify, current_app, make_response
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
 from models.models import db, User
@@ -18,6 +18,8 @@ def generate_otp():
     """Generate a 6-digit OTP"""
     return ''.join(random.choices(string.digits, k=6))
 
+# OPTIONS requests are now handled automatically by Flask-CORS
+
 @auth_bp.route('/register', methods=['POST'])
 def register():
     try:
@@ -29,7 +31,21 @@ def register():
             if not data.get(field):
                 return jsonify({'error': f'{field} is required'}), 400
         
-        email = data['email'].lower().strip()
+        # Better email validation with logging
+        raw_email = data.get('email', '')
+        if not raw_email:
+            return jsonify({'error': 'Email is required'}), 400
+            
+        email = raw_email.lower().strip()
+        print(f"Attempting to register with email: '{email}'")
+        
+        # More comprehensive email validation
+        import re
+        email_regex = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if not re.match(email_regex, email):
+            print(f"Email validation failed for: '{email}'")
+            return jsonify({'error': 'Invalid email format. Please use a valid email address.'}), 400
+            
         password = data['password']
         full_name = data['fullName']
         country = data.get('country', 'Nepal')
@@ -101,28 +117,38 @@ def verify_otp():
         # Create user account
         user_data = stored_data['user_data']
         hashed_password = generate_password_hash(user_data['password'])
-        
+
         current_time = datetime.utcnow()
-        
-        # Create user with all fields
+
+        # Generate a username from the email or full name
+        email_username = user_data['email'].split('@')[0]  # Use part before @ in email
+        # Ensure username is unique
+        base_username = email_username
+        count = 1
+        while User.query.filter_by(username=base_username).first():
+            base_username = f"{email_username}{count}"
+            count += 1
+
+        # First create the user with only basic parameters
         new_user = User(
             email=user_data['email'],
+            username=base_username,  # Add username here
             password_hash=hashed_password,
             fullName=user_data['full_name'],
             country=user_data['country'],
-            gender=user_data.get('gender', ''),
-            email_verified=True,
-            email_verified_at=current_time,
-            is_active=True,
-            is_verified=True,
-            created_at=current_time,
-            last_login=current_time,
-            last_login_ip=request.remote_addr,
-            last_login_device=request.headers.get('User-Agent', 'Unknown'),
-            last_login_location='',  # This would require IP geolocation service
-            profile_picture=''  # Default empty profile picture
+            gender=user_data.get('gender', '')
         )
-        
+
+        # Then set the additional fields as attributes
+        new_user.is_active = True
+        new_user.is_verified = True
+        new_user.created_at = current_time
+        new_user.last_login = current_time
+        new_user.last_login_ip = request.remote_addr
+        new_user.last_login_device = request.headers.get('User-Agent', 'Unknown')
+        new_user.last_login_location = ''
+        new_user.profile_picture = ''
+
         db.session.add(new_user)
         db.session.commit()
         
@@ -203,6 +229,10 @@ def login():
         if not user or not check_password_hash(user.password_hash, data['password']):
             return jsonify({'error': 'Invalid credentials'}), 401
         
+        # Get device information
+        device_id = data.get('deviceId')
+        is_trusted_device = data.get('isTrustedDevice', False)
+        
         # Get IP address - handle proxy servers properly
         ip_address = request.headers.get('X-Forwarded-For', request.remote_addr)
         if ip_address and ',' in ip_address:
@@ -223,17 +253,26 @@ def login():
         
         db.session.commit()
         
-        access_token = create_access_token(identity=user.id)
+        # Create JWT token with extended expiration (30 days)
+        access_token = create_access_token(
+            identity=user.id,
+            expires_delta=timedelta(days=30)  # 30-day session
+        )
         
-        # Send login notification email with IP and location
-        try:
-            email_service.send_login_notification(
-                user.email,
-                device_info=f"{user.last_login_device}",
-                ip_address=ip_address
-            )
-        except Exception as e:
-            current_app.logger.error(f"Failed to send login notification: {e}")
+        # Only send login notification email if device is not trusted
+        if not is_trusted_device:
+            try:
+                email_service.send_login_notification(
+                    user.email,
+                    device_info=f"{user.last_login_device}",
+                    ip_address=ip_address,
+                    location=location
+                )
+                print(f"Login notification sent to {user.email} (untrusted device)")
+            except Exception as e:
+                current_app.logger.error(f"Failed to send login notification: {e}")
+        else:
+            print(f"Skipping login notification for {user.email} (trusted device)")
         
         return jsonify({
             'message': 'Login successful',
@@ -244,7 +283,9 @@ def login():
                 'country': user.country,
                 'last_login_location': location
             },
-            'token': access_token
+            'token': access_token,
+            'session_expires': (datetime.utcnow() + timedelta(days=30)).isoformat(),
+            'is_trusted_device': is_trusted_device
         })
     except Exception as e:
         current_app.logger.error(f"Login error: {e}")
@@ -252,46 +293,27 @@ def login():
 
 @auth_bp.route('/profile', methods=['GET'])
 @jwt_required()
-def profile():
+def get_profile():
     try:
         current_user_id = get_jwt_identity()
-        
-        if not current_user_id:
-            return jsonify({'error': 'Invalid or missing token'}), 401
-            
         user = User.query.get(current_user_id)
         
         if not user:
-            return jsonify({'error': 'User not found'}), 404
-        
-        # Build response with safe attribute access
-        user_data = {
-            'id': user.id,
-            'email': user.email,
-            'full_name': getattr(user, 'fullName', ''),
-            'country': getattr(user, 'country', 'Nepal'),
-            'gender': getattr(user, 'gender', ''),
-            'profile_picture': getattr(user, 'profile_picture', ''),
-            'last_login': getattr(user, 'last_login', None),
-            'last_login_ip': getattr(user, 'last_login_ip', ''),
-            'last_login_device': getattr(user, 'last_login_device', ''),
-            'last_login_location': getattr(user, 'last_login_location', ''),
-            'is_active': getattr(user, 'is_active', True),
-            'is_verified': getattr(user, 'is_verified', False),
-            'created_at': getattr(user, 'created_at', None),
-            'last_sync': getattr(user, 'last_sync', None)
-        }
-        
-        # Format datetime objects
-        for key, value in user_data.items():
-            if isinstance(value, datetime):
-                user_data[key] = value.isoformat()
-        
-        return jsonify(user_data)
-        
+            return jsonify({"error": "User not found"}), 404
+            
+        return jsonify({
+            "id": user.id,
+            "email": user.email,
+            "full_name": user.fullName,  # Changed from name to fullName
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+            # Add any other fields needed by the frontend
+            "country": getattr(user, 'country', ''),
+            "gender": getattr(user, 'gender', ''),
+            "profile_picture": getattr(user, 'profile_picture', '')
+        })
     except Exception as e:
-        current_app.logger.error(f"Profile endpoint error: {str(e)}")
-        return jsonify({'error': 'Authentication failed'}), 401
+        current_app.logger.error(f"Profile fetch error: {str(e)}")
+        return jsonify({"error": str(e)}), 500  # Changed from 401 to 500
 
 @auth_bp.route('/status', methods=['GET'])
 def status():
@@ -406,17 +428,20 @@ def login_history():
         if not user:
             return jsonify({'error': 'User not found'}), 404
             
-        # For now, return mock data since we don't store multiple login records
-        # In a real app, you'd query a login_history table
-        return jsonify([
-            {
-                'date': user.last_login.isoformat() if user.last_login else datetime.utcnow().isoformat(),
-                'ip': user.last_login_ip or 'Unknown',
-                'device': user.last_login_device or 'Unknown',
-                'location': user.last_login_location or 'Unknown',
+        history = []
+        
+        if user.last_login:
+            # Add the most recent login
+            history.append({
+                'date': user.last_login.isoformat(),
+                'device': user.last_login_device,
+                'ip': user.last_login_ip,
+                'location': user.last_login_location,
                 'type': 'login'
-            }
-        ])
+            })
+            
+        return jsonify(history)
+        
     except Exception as e:
         current_app.logger.error(f"Login history error: {str(e)}")
         return jsonify({'error': 'Failed to retrieve login history'}), 500

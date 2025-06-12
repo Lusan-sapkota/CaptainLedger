@@ -8,6 +8,7 @@ import { useTheme } from '@/components/ThemeProvider';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { removeTrustedDevice } from '@/services/api';
 import { getDeviceIdentifier } from '@/utils/device';
+import sessionManager from '@/utils/sessionManager';
 
 const LoginHistoryList = ({ colors }: { colors: any }) => {
   const [loginHistory, setLoginHistory] = useState<any[]>([]);
@@ -100,97 +101,200 @@ const LoginHistoryList = ({ colors }: { colors: any }) => {
   );
 };
 
-const TrustedDevices = ({ colors }: { colors: any }) => {
-  const [devices, setDevices] = useState<any[]>([]);
+const SessionInfo = ({ colors }: { colors: any }) => {
+  const [sessionInfo, setSessionInfo] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [currentDeviceId, setCurrentDeviceId] = useState<string | null>(null);
-  
+
   useEffect(() => {
-    async function loadDevices() {
-      try {
-        // First get current device ID
-        const deviceId = await getDeviceIdentifier();
-        setCurrentDeviceId(deviceId);
-        
-        // This would be an API call in production
-        // For now, we'll just use a mock implementation
-        const storedDevices = await AsyncStorage.getItem('mock_trusted_devices');
-        if (storedDevices) {
-          setDevices(JSON.parse(storedDevices));
-        } else {
-          // Mock data with current device
-          const mockDevices = [{
-            id: deviceId,
-            name: 'This Device',
-            lastUsed: new Date().toISOString(),
-            isCurrent: true
-          }];
-          
-          setDevices(mockDevices);
-          await AsyncStorage.setItem('mock_trusted_devices', JSON.stringify(mockDevices));
-        }
-      } catch (e) {
-        console.error('Error loading trusted devices:', e);
-      } finally {
-        setLoading(false);
-      }
-    }
-    
-    loadDevices();
+    loadSessionInfo();
   }, []);
-  
-  const handleRemoveDevice = async (deviceId: string) => {
+
+  const loadSessionInfo = async () => {
     try {
-      // Don't allow removing current device
-      if (deviceId === currentDeviceId) {
-        Alert.alert('Cannot Remove', 'You cannot remove the device you are currently using');
-        return;
-      }
-      
-      await removeTrustedDevice(deviceId);
-      
-      // Update local state and storage
-      const updatedDevices = devices.filter(d => d.id !== deviceId);
-      setDevices(updatedDevices);
-      await AsyncStorage.setItem('mock_trusted_devices', JSON.stringify(updatedDevices));
-    } catch (e) {
-      console.error('Error removing device:', e);
-      Alert.alert('Error', 'Failed to remove device');
+      setLoading(true);
+      const info = await sessionManager.getSessionInfo();
+      setSessionInfo(info);
+    } catch (error) {
+      console.error('Error loading session info:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
   if (loading) {
     return (
-      <RNView style={{ padding: 20, alignItems: 'center' }}>
+      <RNView style={[styles.sessionContainer, { backgroundColor: colors.cardBackground }]}>
         <ActivityIndicator size="small" color={AppColors.primary} />
       </RNView>
     );
   }
-  
+
+  return (
+    <RNView style={[styles.sessionContainer, { backgroundColor: colors.cardBackground }]}>
+      <Text style={[styles.sessionTitle, { color: colors.text }]}>
+        <FontAwesome name="shield" size={16} color={AppColors.primary} /> Session Information
+      </Text>
+      
+      <RNView style={styles.sessionItem}>
+        <Text style={[styles.sessionLabel, { color: colors.subText }]}>Status:</Text>
+        <Text style={[styles.sessionValue, { 
+          color: sessionInfo?.isValid ? AppColors.primary : AppColors.danger 
+        }]}>
+          {sessionInfo?.isValid ? 'Active' : 'Expired'}
+        </Text>
+      </RNView>
+
+      {sessionInfo?.daysRemaining !== null && (
+        <RNView style={styles.sessionItem}>
+          <Text style={[styles.sessionLabel, { color: colors.subText }]}>Days Remaining:</Text>
+          <Text style={[styles.sessionValue, { 
+            color: sessionInfo.daysRemaining < 7 ? AppColors.warning : colors.text 
+          }]}>
+            {sessionInfo.daysRemaining}
+          </Text>
+        </RNView>
+      )}
+
+      {sessionInfo?.createdAt && (
+        <RNView style={styles.sessionItem}>
+          <Text style={[styles.sessionLabel, { color: colors.subText }]}>Session Created:</Text>
+          <Text style={[styles.sessionValue, { color: colors.text }]}>
+            {new Date(sessionInfo.createdAt).toLocaleString()}
+          </Text>
+        </RNView>
+      )}
+
+      {sessionInfo?.lastActivity && (
+        <RNView style={styles.sessionItem}>
+          <Text style={[styles.sessionLabel, { color: colors.subText }]}>Last Activity:</Text>
+          <Text style={[styles.sessionValue, { color: colors.text }]}>
+            {new Date(sessionInfo.lastActivity).toLocaleString()}
+          </Text>
+        </RNView>
+      )}
+
+      <TouchableOpacity 
+        style={[styles.refreshButton, { borderColor: AppColors.primary }]}
+        onPress={loadSessionInfo}
+      >
+        <FontAwesome name="refresh" size={14} color={AppColors.primary} />
+        <Text style={[styles.refreshText, { color: AppColors.primary }]}>Refresh</Text>
+      </TouchableOpacity>
+    </RNView>
+  );
+};
+
+const TrustedDevicesSection = ({ colors }: { colors: any }) => {
+  const [trustedDevices, setTrustedDevices] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadTrustedDevices();
+  }, []);
+
+  const loadTrustedDevices = async () => {
+    try {
+      setLoading(true);
+      const keys = await AsyncStorage.getAllKeys();
+      const trustedDeviceKeys = keys.filter(key => key.startsWith('trusted_device_') && !key.includes('_name_') && !key.includes('_date_'));
+      
+      const devices = [];
+      for (const key of trustedDeviceKeys) {
+        const deviceId = key.replace('trusted_device_', '');
+        const deviceName = await AsyncStorage.getItem(`trusted_device_name_${deviceId}`) || 'Unknown Device';
+        const deviceDate = await AsyncStorage.getItem(`trusted_device_date_${deviceId}`);
+        const currentDeviceId = await getDeviceIdentifier();
+        
+        devices.push({
+          id: deviceId,
+          name: deviceName,
+          date: deviceDate,
+          isCurrent: deviceId === currentDeviceId
+        });
+      }
+      
+      setTrustedDevices(devices);
+    } catch (error) {
+      console.error('Error loading trusted devices:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const removeTrustedDeviceLocal = async (deviceId: string) => {
+    Alert.alert(
+      'Remove Trusted Device',
+      'Are you sure you want to remove this trusted device? You will receive login notifications from this device again.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await AsyncStorage.multiRemove([
+                `trusted_device_${deviceId}`,
+                `trusted_device_name_${deviceId}`,
+                `trusted_device_date_${deviceId}`
+              ]);
+              
+              // Also try to remove from server
+              try {
+                await removeTrustedDevice(deviceId);
+              } catch (serverError) {
+                console.log('Failed to remove device from server:', serverError);
+              }
+              
+              loadTrustedDevices();
+            } catch (error) {
+              console.error('Error removing trusted device:', error);
+              Alert.alert('Error', 'Failed to remove trusted device');
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  if (loading) {
+    return (
+      <RNView style={{ padding: 20, alignItems: 'center', backgroundColor: 'transparent' }}>
+        <ActivityIndicator size="small" color={AppColors.primary} />
+      </RNView>
+    );
+  }
+
+  if (trustedDevices.length === 0) {
+    return (
+      <RNView style={{ padding: 20, alignItems: 'center', backgroundColor: 'transparent' }}>
+        <Text style={[styles.emptyText, { color: colors.subText }]}>No trusted devices</Text>
+      </RNView>
+    );
+  }
+
   return (
     <RNView style={{ backgroundColor: 'transparent' }}>
-      {devices.map((device, index) => (
-        <RNView 
-          key={device.id} 
-          style={[
-            styles.deviceItem,
-            index < devices.length - 1 && { borderBottomWidth: 1, borderBottomColor: colors.border },
-            { backgroundColor: 'transparent' }
-          ]}
-        >
-          <RNView style={{ flex: 1, backgroundColor: 'transparent' }}>
+      {trustedDevices.map((device, index) => (
+        <RNView key={device.id} style={[
+          styles.deviceItem, 
+          index < trustedDevices.length - 1 && { borderBottomWidth: 1, borderBottomColor: colors.border },
+          { backgroundColor: 'transparent' }
+        ]}>
+          <RNView style={styles.deviceInfo}>
             <Text style={[styles.deviceName, { color: colors.text }]}>
-              {device.name} {device.isCurrent ? '(Current Device)' : ''}
+              {device.name} {device.isCurrent && '(This device)'}
             </Text>
-            <Text style={[styles.deviceLastUsed, { color: colors.subText }]}>
-              Last used: {new Date(device.lastUsed).toLocaleDateString()}
-            </Text>
+            {device.date && (
+              <Text style={[styles.deviceDate, { color: colors.subText }]}>
+                Added: {new Date(device.date).toLocaleDateString()}
+              </Text>
+            )}
           </RNView>
           
           {!device.isCurrent && (
-            <TouchableOpacity 
-              onPress={() => handleRemoveDevice(device.id)}
+            <TouchableOpacity
               style={styles.removeButton}
+              onPress={() => removeTrustedDeviceLocal(device.id)}
             >
               <FontAwesome name="trash" size={16} color={AppColors.danger} />
             </TouchableOpacity>
@@ -198,13 +302,13 @@ const TrustedDevices = ({ colors }: { colors: any }) => {
         </RNView>
       ))}
       
-      {devices.length === 0 && (
-        <RNView style={styles.emptyDevicesContainer}>
-          <Text style={[styles.emptyDevicesText, { color: colors.subText }]}>
-            No trusted devices found
-          </Text>
-        </RNView>
-      )}
+      <TouchableOpacity 
+        style={[styles.refreshButton, { borderColor: AppColors.primary }]}
+        onPress={loadTrustedDevices}
+      >
+        <FontAwesome name="refresh" size={14} color={AppColors.primary} />
+        <Text style={[styles.refreshText, { color: AppColors.primary }]}>Refresh</Text>
+      </TouchableOpacity>
     </RNView>
   );
 };
@@ -282,6 +386,11 @@ export default function SettingsScreen() {
   
   return (
     <ScrollView style={[styles.container, { backgroundColor: colors.background }]}>
+      <Stack.Screen options={{ title: 'Settings', headerShown: true }} />
+      
+      {/* Session Information Section */}
+      <SessionInfo colors={colors} />
+      
       {/* Appearance */}
       <View style={[styles.section, { backgroundColor: colors.cardBackground }]}>
         <Text style={[styles.sectionTitle, { color: colors.text }]}>Appearance</Text>
@@ -392,7 +501,7 @@ export default function SettingsScreen() {
         <Text style={[styles.sectionDescription, { color: colors.subText }]}>
           Devices you've logged in from that won't trigger login notifications
         </Text>
-        <TrustedDevices colors={colors} />
+        <TrustedDevicesSection colors={colors} />
       </View>
       
       {/* Preferences */}
@@ -454,27 +563,49 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  sessionContainer: {
+    margin: 16,
+    padding: 16,
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  sessionTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 12,
+  },
+  sessionItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    backgroundColor: 'transparent',
+  },
+  sessionLabel: {
+    fontSize: 14,
+  },
+  sessionValue: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
   section: {
     margin: 16,
-    borderRadius: 10,
-    overflow: 'hidden',
-    marginBottom: 8,
-    ...(Platform.OS === 'web'
-      ? { 
-          boxShadow: '0px 1px 3px rgba(0, 0, 0, 0.1)',
-        }
-      : {
-          elevation: 2,
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: 1 },
-          shadowOpacity: 0.1,
-          shadowRadius: 2,
-        }),
+    padding: 16,
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
   },
   sectionTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
-    padding: 15,
+    marginBottom: 12,
   },
   sectionDescription: {
     fontSize: 14,
@@ -545,26 +676,45 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
   deviceItem: {
-    paddingVertical: 15,
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    backgroundColor: 'transparent',
+  },
+  deviceInfo: {
+    flex: 1,
+    backgroundColor: 'transparent',
   },
   deviceName: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '500',
   },
-  deviceLastUsed: {
-    fontSize: 14,
+  deviceDate: {
+    fontSize: 12,
     marginTop: 2,
   },
   removeButton: {
     padding: 8,
   },
-  emptyDevicesContainer: {
-    paddingVertical: 15,
+  refreshButton: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderRadius: 6,
+    marginTop: 12,
   },
-  emptyDevicesText: {
-    fontSize: 14,
+  refreshText: {
+    fontSize: 12,
+    marginLeft: 6,
+  },
+  emptyText: {
+    textAlign: 'center',
+    fontStyle: 'italic',
+    paddingVertical: 16,
   },
 });

@@ -6,12 +6,17 @@ import * as SplashScreen from 'expo-splash-screen';
 import React, { useEffect, useState } from 'react';
 import 'react-native-reanimated';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Alert, Text } from 'react-native';
+import { Alert, Text, AppState } from 'react-native';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { View, ActivityIndicator, Platform } from 'react-native';
 import { AppColors } from './(tabs)/_layout';
+import * as apiModule from '@/services/api';
+import sessionManager from '@/utils/sessionManager';
+
+const apiInstance = apiModule.api; 
+const configureApi = apiModule.configureApiForDevice;
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -89,8 +94,6 @@ function RootLayoutNav() {
         console.log('User explicitly logged out');
         await AsyncStorage.removeItem('user_logged_out');
         
-        // Instead of calling multiRemove here which might fail,
-        // just update the auth state directly for speed
         setAuthState({
           isAuthenticated: false,
           isLoading: false,
@@ -102,10 +105,13 @@ function RootLayoutNav() {
       
       // Get auth token - most important item
       const authToken = await AsyncStorage.getItem('auth_token');
+      console.log('Auth token found:', authToken ? `${authToken.substring(0, 8)}...` : 'null');
+      
       const isAuthenticated = await AsyncStorage.getItem('is_authenticated');
       const authExpiration = await AsyncStorage.getItem('auth_expiration');
+      const lastActivity = await AsyncStorage.getItem('last_activity');
       
-      // Check if token is expired (for IP login with 30-day persistence)
+      // Check if token is expired (30-day session)
       let tokenExpired = false;
       if (authExpiration) {
         const expirationDate = new Date(authExpiration);
@@ -113,49 +119,155 @@ function RootLayoutNav() {
         tokenExpired = now > expirationDate;
         
         if (tokenExpired) {
-          console.log('Auth token has expired');
-          // Clear expired auth data
+          console.log('Auth session has expired after 30 days');
           await AsyncStorage.multiRemove([
             'auth_token', 'user_id', 'user_email', 'is_authenticated', 
-            'auth_expiration', 'server_ip', 'is_custom_server'
+            'auth_expiration', 'server_ip', 'is_custom_server', 'session_created',
+            'last_activity', 'device_id'
           ]);
+          // Clear all trusted device data
+          const keys = await AsyncStorage.getAllKeys();
+          const trustedDeviceKeys = keys.filter(key => key.startsWith('trusted_device_'));
+          if (trustedDeviceKeys.length > 0) {
+            await AsyncStorage.multiRemove(trustedDeviceKeys);
+          }
         }
       }
       
+      // Update last activity timestamp for session extension
+      if (authToken && !tokenExpired) {
+        const now = new Date().toISOString();
+        await AsyncStorage.setItem('last_activity', now);
+        
+        // Extend session if it's been more than 7 days since last activity
+        if (lastActivity) {
+          const lastActivityDate = new Date(lastActivity);
+          const daysSinceActivity = (new Date().getTime() - lastActivityDate.getTime()) / (1000 * 60 * 60 * 24);
+          
+          if (daysSinceActivity > 7) {
+            // Extend session by another 30 days
+            const newExpirationDate = new Date();
+            newExpirationDate.setDate(newExpirationDate.getDate() + 30);
+            await AsyncStorage.setItem('auth_expiration', newExpirationDate.toISOString());
+            console.log('Session extended for another 30 days due to activity');
+          }
+        }
+      }
+      
+      // MODIFIED: Consider any valid non-empty token as valid, with better offline handling
+      const isSpecialToken = authToken === 'ip-login-token' || 
+                            authToken === 'offline-token' || 
+                            authToken === 'guest-token';
+                            
+      // More lenient token validity check - prioritize local auth state
       const isValidToken = Boolean(
         authToken && 
         !tokenExpired &&
-        (authToken !== 'invalid-token') &&
-        (authToken !== '') &&
-        (authToken === 'ip-login-token' || 
-         authToken === 'offline-token' ||
-         authToken === 'guest-token')
+        authToken !== 'invalid-token' &&
+        authToken !== ''
       );
       
       const isExplicitlyAuthenticated = isAuthenticated === 'true';
       const hasValidAuth = isValidToken || isExplicitlyAuthenticated;
       
-      console.log('Has valid auth?', hasValidAuth, { isValidToken, isExplicitlyAuthenticated });
+      console.log('Auth check details:', { 
+        isValidToken, 
+        isExplicitlyAuthenticated,
+        tokenExpired,
+        hasValidAuth,
+        sessionExtended: lastActivity ? 'checked' : 'no_activity'
+      });
       
       if (hasValidAuth) {
         const userId = await AsyncStorage.getItem('user_id');
         const email = await AsyncStorage.getItem('user_email');
         
-        setAuthState({
-          isAuthenticated: true,
-          isLoading: false,
-          user: { 
-            id: userId || 'user', 
-            email: email || 'user@example.com' 
-          }
-        });
-      } else {
-        setAuthState({
-          isAuthenticated: false,
-          isLoading: false,
-          user: null
-        });
+        if (userId && email) {
+          setAuthState({
+            isAuthenticated: true,
+            isLoading: false,
+            user: { id: userId, email }
+          });
+          setCheckedOnboarding(true);
+          return;
+        }
       }
+      
+      // Only validate with server if we have a real token and good network
+      if (authToken && !isSpecialToken && !tokenExpired && navigator.onLine) {
+        console.log('Validating session with server...');
+        
+        try {
+          // Validate token by fetching user profile with timeout
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Request timeout')), 8000)
+          );
+          
+          const responsePromise = getUserProfile();
+          
+          const responseUnknown = await Promise.race([responsePromise, timeoutPromise]);
+          const response = responseUnknown as { status: number; data: any };
+
+          if (response.status === 200 && response.data) {
+            setAuthState({
+              isAuthenticated: true,
+              isLoading: false,
+              user: response.data
+            });
+            setCheckedOnboarding(true);
+            return;
+          } else {
+            // For specific error codes, keep the user authenticated
+            if (response.status === 0 || response.status === 408) {
+              // Network error or timeout - still allow user to use the app
+              console.log('Network issue, keeping user authenticated with local data');
+              const userId = await AsyncStorage.getItem('user_id');
+              const email = await AsyncStorage.getItem('user_email');
+              
+              if (userId && email) {
+                setAuthState({
+                  isAuthenticated: true,
+                  isLoading: false,
+                  user: { id: userId, email }
+                });
+                setCheckedOnboarding(true);
+                return;
+              }
+            }
+            
+            // Other errors, clear token
+            console.log('Server validation failed, clearing session');
+            await AsyncStorage.multiRemove([
+              'auth_token', 'user_id', 'user_email', 'is_authenticated', 
+              'auth_expiration', 'server_ip', 'is_custom_server', 'session_created',
+              'last_activity', 'device_id'
+            ]);
+          }
+        } catch (error) {
+          console.error('Error validating with server:', error);
+          // On network error, fall back to local storage data if available
+          const userId = await AsyncStorage.getItem('user_id');
+          const email = await AsyncStorage.getItem('user_email');
+          
+          if (userId && email) {
+            console.log('Server validation failed, using local auth data');
+            setAuthState({
+              isAuthenticated: true,
+              isLoading: false,
+              user: { id: userId, email }
+            });
+            setCheckedOnboarding(true);
+            return;
+          }
+        }
+      }
+      
+      // If we reach here, authentication failed
+      setAuthState({
+        isAuthenticated: false,
+        isLoading: false,
+        user: null
+      });
       
       setCheckedOnboarding(true);
     } catch (error) {
@@ -174,6 +286,50 @@ function RootLayoutNav() {
       checkAuthState();
     }
   }, [hasRedirectedToOnboarding, authCheckTrigger, checkAuthState]);
+
+  // Add session management for app state changes
+  useEffect(() => {
+    const handleAppStateChange = (nextAppState: string) => {
+      if (nextAppState === 'active') {
+        // Update session activity when app becomes active
+        sessionManager.updateActivity();
+        
+        // Check if session is still valid
+        sessionManager.isSessionValid().then(isValid => {
+          if (!isValid && authState.isAuthenticated) {
+            console.log('Session expired, logging out user');
+            handleLogout();
+          }
+        });
+      }
+    };
+
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+    
+    // Initial activity update
+    sessionManager.updateActivity();
+
+    return () => subscription?.remove();
+  }, [authState.isAuthenticated]);
+
+  // Periodic session validation
+  useEffect(() => {
+    if (!authState.isAuthenticated) return;
+
+    const interval = setInterval(async () => {
+      const isValid = await sessionManager.isSessionValid();
+      if (!isValid) {
+        console.log('Session validation failed, logging out user');
+        clearInterval(interval);
+        handleLogout();
+      } else {
+        // Update activity periodically
+        sessionManager.updateActivity();
+      }
+    }, 10 * 60 * 1000); // Check every 10 minutes
+
+    return () => clearInterval(interval);
+  }, [authState.isAuthenticated]);
 
   useEffect(() => {
     console.log('Auth state changed:', {
@@ -251,14 +407,13 @@ function RootLayoutNav() {
               // Set logout flag before clearing storage
               await AsyncStorage.setItem('user_logged_out', 'true');
               
-              // Clear ALL auth-related items
-              const keysToRemove = [
-                'auth_token',
-                'user_id',
-                'user_email',
+              // Use session manager to clear all session data
+              await sessionManager.clearSession();
+              
+              // Clear additional user data
+              const additionalKeysToRemove = [
                 'user_fullName',
                 'user_country',
-                'is_authenticated',
                 'is_offline_mode',
                 'is_guest_mode',
                 'completed_onboarding',
@@ -269,12 +424,9 @@ function RootLayoutNav() {
                 'user_phone'
               ];
               
-              // Clear all keys sequentially
-              for (const key of keysToRemove) {
-                await AsyncStorage.removeItem(key);
-              }
+              await AsyncStorage.multiRemove(additionalKeysToRemove);
               
-              console.log('All auth data cleared');
+              console.log('All auth and session data cleared');
               
               // Force auth state re-check
               setAuthState({
@@ -302,6 +454,179 @@ function RootLayoutNav() {
       ]
     );
   };
+
+  // Add better token refresh and persistence
+  useEffect(() => {
+    const checkAuthentication = async () => {
+      try {
+        setAuthState(prev => ({ ...prev, isLoading: true }));
+        
+        // Check for token in storage
+        const token = await AsyncStorage.getItem('auth_token');
+        
+        if (!token) {
+          setAuthState({
+            isAuthenticated: false,
+            isLoading: false,
+            user: null
+          });
+          return;
+        }
+        
+        // Validate token by fetching user profile with timeout
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Request timeout')), 8000)
+        );
+        
+        const responsePromise = getUserProfile();
+        
+        const responseUnknown = await Promise.race([responsePromise, timeoutPromise]);
+        const response = responseUnknown as { status: number; data: any };
+
+        if (response.status === 200 && response.data) {
+          setAuthState({
+            isAuthenticated: true,
+            isLoading: false,
+            user: response.data
+          });
+        } else {
+          // For specific error codes, keep the user authenticated
+          if (response.status === 0 || response.status === 408) {
+            // Network error or timeout - still allow user to use the app
+            console.log('Network issue, keeping user authenticated');
+            const userId = await AsyncStorage.getItem('user_id');
+            const email = await AsyncStorage.getItem('user_email');
+            
+            if (userId && email) {
+              setAuthState({
+                isAuthenticated: true,
+                isLoading: false,
+                user: { id: userId, email }
+              });
+              return;
+            }
+          }
+          
+          // Other errors, clear token
+          await AsyncStorage.removeItem('auth_token');
+          setAuthState({
+            isAuthenticated: false,
+            isLoading: false,
+            user: null
+          });
+        }
+      } catch (error) {
+        console.error('Error checking authentication:', error);
+        // On error, fall back to local storage data if available
+        const userId = await AsyncStorage.getItem('user_id');
+        const email = await AsyncStorage.getItem('user_email');
+        
+        if (userId && email) {
+          setAuthState({
+            isAuthenticated: true,
+            isLoading: false,
+            user: { id: userId, email }
+          });
+        } else {
+          await AsyncStorage.removeItem('auth_token');
+          setAuthState({
+            isAuthenticated: false,
+            isLoading: false,
+            user: null
+          });
+        }
+      }
+    };
+    
+    checkAuthentication();
+  }, []);
+
+  // Add this function to your RootLayoutNav component
+  const checkApiConnection = async (): Promise<{success: boolean; message: string}> => {
+    try {
+      const customServerIp = await AsyncStorage.getItem('server_ip');
+      const testUrl = customServerIp 
+        ? `http://${customServerIp}:5000/api/status` 
+        : (Platform.OS === 'android' 
+            ? 'http://10.0.2.2:5000/api/status' 
+            : 'http://localhost:5000/api/status');
+      
+      console.log(`Testing API connection to: ${testUrl}`);
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+      
+      try {
+        const response = await fetch(testUrl, {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' },
+          mode: 'cors',
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (response.ok) {
+          const data = await response.json();
+          console.log('API connection successful:', data);
+          return {
+            success: true,
+            message: `Connected to server: ${data?.message || 'OK'}`
+          };
+        } else {
+          console.error(`API connection failed with status: ${response.status}`);
+          return {
+            success: false,
+            message: `Server returned error: ${response.status} ${response.statusText}`
+          };
+        }
+      } catch (fetchError) {
+        clearTimeout(timeoutId);
+        if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+          return {
+            success: false,
+            message: 'Connection timed out after 10 seconds'
+          };
+        }
+        throw fetchError; // Re-throw for outer catch
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('API connection test failed:', errorMessage);
+      return {
+        success: false,
+        message: `Connection failed: ${errorMessage}`
+      };
+    }
+  };
+
+  // Call this in your initApi function
+  useEffect(() => {
+    const initApi = async () => {
+      try {
+        // First test the connection
+        const connectionStatus = await checkApiConnection();
+        console.log('API connection test result:', connectionStatus.success, connectionStatus.message);
+        
+        // Get any custom server IP the user might have set
+        const customServerIp = await AsyncStorage.getItem('server_ip');
+        
+        // Use the renamed function from the api module
+        if (typeof configureApi === 'function') {
+          await configureApi(customServerIp || undefined);
+        } else {
+          console.warn('configureApi function not available');
+        }
+        
+        // Store connection status
+        await AsyncStorage.setItem('api_connection_status', JSON.stringify(connectionStatus));
+      } catch (error) {
+        console.error('Error initializing API client:', error);
+      }
+    };
+    
+    initApi();
+  }, []);
 
   if (authState.isLoading) {
     return (
@@ -334,3 +659,83 @@ function RootLayoutNav() {
     </ThemeProvider>
   );
 }
+// Simulate fetching user profile from an API using the stored auth_token
+async function getUserProfile() {
+  try {
+    const token = await AsyncStorage.getItem('auth_token');
+    if (!token) {
+      return { status: 401, data: null };
+    }
+
+    // Use the renamed axios instance
+    const response = await apiInstance.get('/auth/profile', {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      withCredentials: true
+    });
+
+    return { 
+      status: response.status, 
+      data: response.data
+    };
+  } catch (error) {
+    console.error('Failed to fetch user profile:', error);
+    
+    // Special handling - if error is 500 (server error), don't treat as auth failure
+    if (error && typeof error === 'object' && 'response' in error &&
+        typeof (error as any).response === 'object' && (error as any).response?.status === 500) {
+      console.log('Server error (500) - not treating as auth failure');
+      // Return a special status code to keep the user logged in
+      return { status: 0, data: null };
+    }
+    
+    // Rest of your error handling
+    if (error && typeof error === 'object' && 'response' in error) {
+      return { 
+        status: (error as any).response?.status || 500, 
+        data: null 
+      };
+    } else if (error && typeof error === 'object' && 'request' in error) {
+      console.log('No response received - network issue');
+      return { status: 0, data: null };
+    } else {
+      return { status: 500, data: null };
+    }
+  }
+}
+function configureApiForDevice(customServerIp?: string) {
+  // Default API base URL depending on platform
+  let baseURL: string;
+
+  if (customServerIp) {
+    // Use the custom server IP provided by the user
+    baseURL = `http://${customServerIp}:5000/api`; // Add correct port and path
+  } else if (Platform.OS === 'android') {
+    // Android emulator uses 10.0.2.2 to access host machine
+    baseURL = 'http://10.0.2.2:5000/api';
+  } else if (Platform.OS === 'ios') {
+    // iOS simulator - localhost works
+    baseURL = 'http://localhost:5000/api';
+  } else if (Platform.OS === 'web') {
+    // Web version - use localhost
+    baseURL = 'http://localhost:5000/api';
+  } else {
+    // Physical device - this should be your computer's local IP
+    baseURL = 'http://192.168.18.2:5000/api'; // Use your actual IP address
+  }
+
+  console.log(`Setting API baseURL to: ${baseURL}`);
+  
+  // Set the baseURL for the API client using the renamed instance
+  apiInstance.defaults.baseURL = baseURL;
+  
+  // Also configure withCredentials for CORS
+  apiInstance.defaults.withCredentials = true;
+  apiInstance.defaults.headers.common['Content-Type'] = 'application/json';
+  
+  // Store the configured URL for reference
+  AsyncStorage.setItem('api_base_url', baseURL);
+}
+

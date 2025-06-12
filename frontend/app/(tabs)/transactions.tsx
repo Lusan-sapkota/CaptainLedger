@@ -22,6 +22,7 @@ import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/dat
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
+import { eventEmitter } from '@/utils/eventEmitter';
 
 // Local components
 import { Text, View } from '@/components/Themed';
@@ -32,27 +33,36 @@ import { useTheme } from '@/components/ThemeProvider';
 import {
   getTransactions,
   createTransaction,
-  deleteTransaction,
+  updateTransaction,
   getCategoriesApi,
-  addCategory
+  addCategory,
+  deleteTransaction
 } from '@/services/api';
 import { AppColors } from './_layout';
+
+// Types
+type Transaction = {
+  id: string;
+  amount: number;
+  currency: string;
+  date: string;
+  category: string;
+  note?: string;
+  deadline?: string;
+  // New fields for loans and investments
+  transaction_type?: 'regular' | 'loan' | 'investment' | 'loan_repayment' | 'investment_return';
+  interest_rate?: number; // For loans
+  roi_percentage?: number; // For investments
+  lender_name?: string; // For loans
+  investment_platform?: string; // For investments
+  status?: 'active' | 'repaid' | 'matured' | 'pending';
+  linked_transaction_id?: string; // For linking repayments to original loans
+};
 
 export default function TransactionsScreen() {
   const { isDarkMode, colors } = useTheme();
   const { showAlert } = useAlert();
   const router = useRouter();
-  
-  // Types
-  type Transaction = {
-    id: string;
-    amount: number;
-    currency: string;
-    date: string;
-    category: string;
-    note?: string;
-    deadline?: string;  // Added for loan transactions
-  };
 
   // States
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -69,14 +79,19 @@ export default function TransactionsScreen() {
     note: '',
     date: new Date().toISOString().split('T')[0],
     isIncome: false,
-    deadline: '' // For loan transactions
+    deadline: '',
+    transaction_type: 'regular' as 'regular' | 'loan' | 'loan_repayment' | 'investment' | 'investment_return',
+    interest_rate: '',
+    roi_percentage: '',
+    lender_name: '',
+    investment_platform: '',
+    status: 'active' as 'active' | 'repaid' | 'matured' | 'pending'
   });
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [datePickerMode, setDatePickerMode] = useState<'transactionDate' | 'loanDeadline'>('transactionDate');
   
   // Category states
   const [categories, setCategories] = useState<Category[]>([]);
-  const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [showCategoriesSelector, setShowCategoriesSelector] = useState(false);
   
   // Monthly summary
@@ -86,23 +101,17 @@ export default function TransactionsScreen() {
     expenses: number;
     balance: number;
     currency: string;
+    loansReceived: number;
+    investmentsMade: number;
+    loanRepayments: number;
+    investmentReturns: number;
   } | null;
   const [monthlySummary, setMonthlySummary] = useState<MonthlySummary>(null);
   const summaryAnimation = useRef(new Animated.Value(0)).current;
   
   // Calculated values
-  const balance = transactions.reduce((sum, t) => sum + t.amount, 0) || 0;
-  
-  // New states for category management
-  const [newCategoryName, setNewCategoryName] = useState('');
-  const [selectedCategoryColor, setSelectedCategoryColor] = useState('#FF5722');
-  
-  // Predefined colors for category selection
-  const CATEGORY_COLORS = [
-    '#FF5722', '#E91E63', '#9C27B0', '#673AB7', '#3F51B5',
-    '#2196F3', '#03A9F4', '#00BCD4', '#009688', '#4CAF50',
-    '#8BC34A', '#CDDC39', '#FFEB3B', '#FFC107', '#FF9800'
-  ];
+  const balanceInfo = calculateEnhancedBalance(transactions);
+  const balance = balanceInfo.totalBalance;
 
   // Add this state to track editing
   const [editingTransactionId, setEditingTransactionId] = useState<string | null>(null);
@@ -127,19 +136,14 @@ export default function TransactionsScreen() {
         
         setTransactions(sortedTransactions);
         calculateMonthlySummary(sortedTransactions);
+        setError(null); // Clear any previous errors
       }
     } catch (err) {
       console.error('Error loading transactions:', err);
-      setError('Network error. Using sample data.');
+      setError('Failed to load transactions from server');
       
-      // Sample data for testing
-      const sampleData = [
-        { id: '1', amount: -25.99, currency: 'USD', date: new Date().toISOString().split('T')[0], category: 'Food', note: 'Groceries' },
-        { id: '2', amount: -12.50, currency: 'USD', date: new Date().toISOString().split('T')[0], category: 'Transport', note: 'Uber ride' },
-        { id: '3', amount: 1500, currency: 'USD', date: new Date().toISOString().split('T')[0], category: 'Income', note: 'Salary' }
-      ];
-      setTransactions(sampleData);
-      calculateMonthlySummary(sampleData);
+      // Don't show sample data in production - let user know there's an issue
+      showAlert('Network Error', 'Failed to load transactions. Please check your connection.', 'error');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -210,12 +214,36 @@ export default function TransactionsScreen() {
     
     let income = 0;
     let expenses = 0;
+    let loansReceived = 0;
+    let investmentsMade = 0;
+    let loanRepayments = 0;
+    let investmentReturns = 0;
     
     monthTransactions.forEach((t: Transaction) => {
-      if (t.amount > 0) {
-        income += t.amount;
-      } else {
-        expenses += Math.abs(t.amount);
+      switch (t.transaction_type) {
+        case 'loan':
+          loansReceived += t.amount;
+          income += t.amount; // Include in income for balance calculation
+          break;
+        case 'loan_repayment':
+          loanRepayments += t.amount;
+          expenses += t.amount;
+          break;
+        case 'investment':
+          investmentsMade += t.amount;
+          expenses += t.amount;
+          break;
+        case 'investment_return':
+          investmentReturns += t.amount;
+          income += t.amount;
+          break;
+        default:
+          if (t.amount > 0) {
+            income += t.amount;
+          } else {
+            expenses += Math.abs(t.amount);
+          }
+          break;
       }
     });
     
@@ -224,14 +252,28 @@ export default function TransactionsScreen() {
       income,
       expenses,
       balance: income - expenses,
-      currency: data[0]?.currency || 'USD'
+      currency: data[0]?.currency || 'USD',
+      // Add new fields for enhanced summary
+      loansReceived,
+      investmentsMade,
+      loanRepayments,
+      investmentReturns
     });
     
-    Animated.timing(summaryAnimation, {
-      toValue: 1,
-      duration: 500,
-      useNativeDriver: true
-    }).start();
+    // Animate summary appearance
+    if (Platform.OS === 'web') {
+      Animated.timing(summaryAnimation, {
+        toValue: 1,
+        duration: 500,
+        useNativeDriver: false
+      }).start();
+    } else {
+      Animated.timing(summaryAnimation, {
+        toValue: 1,
+        duration: 500,
+        useNativeDriver: true
+      }).start();
+    }
   };
 
   const handleDateChange = (
@@ -273,7 +315,13 @@ export default function TransactionsScreen() {
       note: item.note || '',
       date: item.date,
       isIncome: item.amount > 0,
-      deadline: item.deadline || ''
+      deadline: item.deadline || '',
+      transaction_type: item.transaction_type || 'regular',
+      interest_rate: item.interest_rate?.toString() || '',
+      roi_percentage: item.roi_percentage?.toString() || '',
+      lender_name: item.lender_name || '',
+      investment_platform: item.investment_platform || '',
+      status: item.status || 'active'
     });
     
     // Set the editing flag with the transaction ID
@@ -284,7 +332,7 @@ export default function TransactionsScreen() {
   };
 
   // Update the handleAddTransaction function to handle both adding and editing
-  const handleAddTransaction = () => {
+  const handleAddTransaction = async () => {
     if (!newTransaction.amount || isNaN(parseFloat(newTransaction.amount))) {
       showAlert('Invalid Amount', 'Please enter a valid amount', 'error');
       return;
@@ -299,62 +347,103 @@ export default function TransactionsScreen() {
     const amount = parseFloat(newTransaction.amount);
     const finalAmount = newTransaction.isIncome ? Math.abs(amount) : -Math.abs(amount);
     
-    if (editingTransactionId) {
-      // We're editing an existing transaction
-      const updatedTransactions = transactions.map(t => 
-        t.id === editingTransactionId 
-          ? {
-              ...t,
-              amount: finalAmount,
-              currency: newTransaction.currency,
-              date: newTransaction.date,
-              category: newTransaction.category,
-              note: newTransaction.note,
-              deadline: newTransaction.category === 'Loan' ? newTransaction.deadline : undefined
-            }
-          : t
-      );
-      
-      setTransactions(updatedTransactions);
-      setEditingTransactionId(null); // Clear editing state
-      showAlert('Success', 'Transaction updated successfully', 'success');
-      
-      // Update API if needed
-      // updateTransaction(editingTransactionId, newTx).catch(err => {
-      //   console.error('Failed to update transaction on server', err);
-      // });
-    } else {
-      // We're adding a new transaction
-      const newTx = {
-        id: Date.now().toString(),
-        amount: finalAmount,
-        currency: newTransaction.currency,
-        date: newTransaction.date,
-        category: newTransaction.category,
-        note: newTransaction.note,
-        deadline: newTransaction.category === 'Loan' ? newTransaction.deadline : undefined
-      };
-      
-      const updatedTransactions = [newTx, ...transactions]
-        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    // Show loading state
+    setLoading(true);
+    
+    try {
+      if (editingTransactionId) {
+        // We're editing an existing transaction
+        const updatedTransactionData = {
+          amount: finalAmount,
+          currency: newTransaction.currency,
+          date: newTransaction.date,
+          category: newTransaction.category,
+          note: newTransaction.note,
+          deadline: newTransaction.category === 'Loan' ? newTransaction.deadline : undefined,
+          transaction_type: newTransaction.transaction_type,
+          interest_rate: newTransaction.interest_rate ? parseFloat(newTransaction.interest_rate) : undefined,
+          roi_percentage: newTransaction.roi_percentage ? parseFloat(newTransaction.roi_percentage) : undefined,
+          lender_name: newTransaction.lender_name,
+          investment_platform: newTransaction.investment_platform,
+          status: newTransaction.status
+        };
         
-      setTransactions(updatedTransactions);
-      showAlert('Success', 'Transaction added successfully', 'success');
+        // Call API to update transaction
+        await updateTransaction(editingTransactionId, updatedTransactionData);
+        
+        // Update local state
+        const updatedTransactions = transactions.map(t => 
+          t.id === editingTransactionId 
+            ? { ...t, ...updatedTransactionData }
+            : t
+        );
+        
+        setTransactions(updatedTransactions);
+        setEditingTransactionId(null);
+        showAlert('Success', 'Transaction updated successfully', 'success');
+        
+        // Emit event for dashboard update
+        eventEmitter.emit('transactionUpdated');
+      } else {
+        // We're adding a new transaction
+        const newTransactionData = {
+          amount: finalAmount,
+          currency: newTransaction.currency,
+          date: newTransaction.date,
+          category: newTransaction.category,
+          note: newTransaction.note,
+          deadline: newTransaction.category === 'Loan' ? newTransaction.deadline : undefined,
+          transaction_type: newTransaction.transaction_type,
+          interest_rate: newTransaction.interest_rate ? parseFloat(newTransaction.interest_rate) : undefined,
+          roi_percentage: newTransaction.roi_percentage ? parseFloat(newTransaction.roi_percentage) : undefined,
+          lender_name: newTransaction.lender_name,
+          investment_platform: newTransaction.investment_platform,
+          status: newTransaction.status
+        };
+        
+        // Call API to create transaction
+        const response = await createTransaction(newTransactionData);
+        
+        if (response?.data?.transaction) {
+          // Add the new transaction with the ID from backend
+          const createdTransaction = response.data.transaction;
+          const updatedTransactions = [createdTransaction, ...transactions]
+            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+            
+          setTransactions(updatedTransactions);
+          calculateMonthlySummary(updatedTransactions);
+          showAlert('Success', 'Transaction added successfully', 'success');
+          
+          // Emit event for dashboard update
+          eventEmitter.emit('transactionAdded');
+        }
+      }
+      
+      setModalVisible(false);
+      
+      // Reset form
+      setNewTransaction({
+        amount: '',
+        currency: 'USD',
+        category: 'Other',
+        note: '',
+        date: new Date().toISOString().split('T')[0],
+        isIncome: false,
+        deadline: '',
+        transaction_type: 'regular' as 'regular' | 'loan' | 'investment',
+        interest_rate: '',
+        roi_percentage: '',
+        lender_name: '',
+        investment_platform: '',
+        status: 'active' as 'active' | 'repaid' | 'matured' | 'pending'
+      });
+      
+    } catch (error) {
+      console.error('Error saving transaction:', error);
+      showAlert('Error', 'Failed to save transaction. Please try again.', 'error');
+    } finally {
+      setLoading(false);
     }
-    
-    setModalVisible(false);
-    calculateMonthlySummary(transactions);
-    
-    // Reset form
-    setNewTransaction({
-      amount: '',
-      currency: 'USD',
-      category: 'Other',
-      note: '',
-      date: new Date().toISOString().split('T')[0],
-      isIncome: false,
-      deadline: ''
-    });
   };
   
 
@@ -369,59 +458,107 @@ export default function TransactionsScreen() {
     return category?.icon || 'ellipsis-horizontal';
   };
   
-  // Update the renderTransactionItem function to include a delete button
+  // Update the renderTransactionItem function
   const renderTransactionItem = ({ item }: { item: Transaction }) => (
     <TouchableOpacity 
       style={[styles.transactionItem, { backgroundColor: colors.cardBackground }]}
       onLongPress={() => confirmDeleteTransaction(item)}
     >
-      <View style={[styles.transactionLeft, { backgroundColor: colors.cardBackground }]}>
+      <View style={[styles.transactionLeft, { backgroundColor: 'transparent' }]}>
         <View 
-          style={[styles.categoryIcon, { backgroundColor: getCategoryColor(item.category) }]}
+          style={[styles.categoryIcon, { backgroundColor: getTransactionTypeColor(item) }]}
         >
-          <Ionicons name={getCategoryIcon(item.category) as keyof typeof Ionicons.glyphMap} size={20} color="white" />
+          <Ionicons 
+            name={item.transaction_type === 'loan' ? 'cash' as keyof typeof Ionicons.glyphMap :
+                  item.transaction_type === 'investment' ? 'trending-up' as keyof typeof Ionicons.glyphMap :
+                  getCategoryIcon(item.category) as keyof typeof Ionicons.glyphMap} 
+            size={20} 
+            color="white" 
+          />
         </View>
-        <View style={[styles.transactionDetails, { backgroundColor: colors.cardBackground }]}>
+        <View style={[styles.transactionDetails, { backgroundColor: 'transparent' }]}>
           <Text style={[styles.transactionCategory, { color: colors.text }]}>
-            {item.category}
+            {getTransactionTypeLabel(item)}
           </Text>
           <Text style={[styles.transactionNote, { color: colors.text }]}>
             {item.note || 'No description'}
           </Text>
-          <Text style={[styles.transactionDate, { color: colors.text }]}>
-            {new Date(item.date).toLocaleDateString()}
-          </Text>
-          {/* Show deadline if it's a loan */}
-          {item.category === 'Loan' && item.deadline && (
+          
+          {/* Enhanced details for loans and investments */}
+          {item.transaction_type === 'loan' && (
+            <View style={{ backgroundColor: 'transparent' }}>
+              <Text style={[styles.transactionDate, { color: colors.text }]}>
+                {new Date(item.date).toLocaleDateString()}
+                {item.deadline && ` • Due: ${new Date(item.deadline).toLocaleDateString()}`}
+              </Text>
+              {item.interest_rate && (
+                <Text style={[styles.detailText, { color: '#FF9800' }]}>
+                  Interest: {item.interest_rate}% • {item.lender_name || 'Unknown lender'}
+                </Text>
+              )}
+            </View>
+          )}
+          
+          {item.transaction_type === 'investment' && (
+            <View style={{ backgroundColor: 'transparent' }}>
+              <Text style={[styles.transactionDate, { color: colors.text }]}>
+                {new Date(item.date).toLocaleDateString()}
+              </Text>
+              {item.roi_percentage && (
+                <Text style={[styles.detailText, { color: '#FF9800' }]}>
+                  Expected ROI: {item.roi_percentage}% • {item.investment_platform || 'Platform not specified'}
+                </Text>
+              )}
+            </View>
+          )}
+          
+          {(!item.transaction_type || item.transaction_type === 'regular') && (
+            <Text style={[styles.transactionDate, { color: colors.text }]}>
+              {new Date(item.date).toLocaleDateString()}
+            </Text>
+          )}
+          
+          {/* Show deadline for regular loans */}
+          {item.category === 'Loan' && item.deadline && !item.transaction_type && (
             <Text style={[styles.deadlineText, { color: isDeadlineSoon(item.deadline) ? AppColors.danger : '#FF9800' }]}>
               Due: {new Date(item.deadline).toLocaleDateString()}
             </Text>
           )}
         </View>
       </View>
-      <View style={{ flexDirection: 'column', alignItems: 'flex-end' }}>
+      <View style={{ flexDirection: 'column', alignItems: 'flex-end', backgroundColor: 'transparent' }}>
         <Text 
           style={[
             styles.transactionAmount,
-            item.amount < 0 ? styles.expense : styles.income
+            { color: getTransactionTypeColor(item), backgroundColor: 'transparent' }
           ]}
         >
           {item.amount < 0 ? '-' : '+'}{item.currency} {Math.abs(item.amount).toFixed(2)}
         </Text>
         
+        {/* Show status for loans and investments */}
+        {(item.transaction_type === 'loan' || item.transaction_type === 'investment') && (
+          <Text style={[styles.statusText, { 
+            color: item.status === 'active' ? '#FF9800' : 
+                   item.status === 'repaid' ? AppColors.primary : 
+                   item.status === 'matured' ? AppColors.primary : colors.subText,
+            backgroundColor: 'transparent'
+          }]}>
+            {item.status?.toUpperCase() || 'ACTIVE'}
+          </Text>
+        )}
+        
         {/* Action buttons row */}
-        <View style={styles.actionButtonsRow}>
-          {/* Edit button */}
+        <View style={[styles.actionButtonsRow, { backgroundColor: 'transparent' }]}>
           <TouchableOpacity 
-            style={styles.actionIconButton}
+            style={[styles.actionIconButton, { backgroundColor: 'transparent' }]}
             onPress={() => handleEditTransaction(item)}
           >
             <FontAwesome name="pencil" size={16} color={AppColors.primary} />
           </TouchableOpacity>
           
-          {/* Delete button */}
           <TouchableOpacity 
-            style={[styles.actionIconButton, { marginLeft: 10 }]}
+            style={[styles.actionIconButton, { marginLeft: 10, backgroundColor: 'transparent' }]}
             onPress={() => confirmDeleteTransaction(item)}
           >
             <FontAwesome name="trash-o" size={16} color={AppColors.danger} />
@@ -451,23 +588,25 @@ export default function TransactionsScreen() {
           style: 'destructive', 
           onPress: async () => {
             try {
-              // Set up optimistic update
+              setLoading(true);
+              
+              // Call API to delete transaction first
+              await deleteTransaction(item.id);
+              
+              // Update local state after successful API call
               const updatedTransactions = transactions.filter(t => t.id !== item.id);
               setTransactions(updatedTransactions);
               calculateMonthlySummary(updatedTransactions);
               
-              // Show feedback
               showAlert('Success', 'Transaction deleted successfully', 'success');
               
-              // If you have API integration
-              try {
-                await deleteTransaction(item.id);
-              } catch (error) {
-                console.error('Failed to delete from server, but removed locally', error);
-              }
+              // Emit event for dashboard update
+              eventEmitter.emit('transactionDeleted');
             } catch (error) {
               console.error('Error deleting transaction:', error);
               showAlert('Error', 'Failed to delete transaction', 'error');
+            } finally {
+              setLoading(false);
             }
           }
         }
@@ -691,6 +830,35 @@ export default function TransactionsScreen() {
     });
   };
 
+  function calculateLoanDetails(amount: number, interestRate: number, deadline: string): { monthlyPayment: number; totalRepayment: number; } {
+    // Calculate number of months from now to deadline
+    const now = new Date();
+    const end = new Date(deadline);
+    let months = (end.getFullYear() - now.getFullYear()) * 12 + (end.getMonth() - now.getMonth());
+    // If deadline is in the past or this month, treat as 1 month
+    months = Math.max(1, months);
+
+    // Convert annual interest rate to monthly
+    const monthlyRate = interestRate / 100 / 12;
+
+    let monthlyPayment: number;
+    let totalRepayment: number;
+
+    if (monthlyRate === 0) {
+      // No interest
+      monthlyPayment = amount / months;
+      totalRepayment = amount;
+    } else {
+      // Standard amortized loan formula
+      monthlyPayment = amount * (monthlyRate * Math.pow(1 + monthlyRate, months)) / (Math.pow(1 + monthlyRate, months) - 1);
+      totalRepayment = monthlyPayment * months;
+    }
+
+    return {
+      monthlyPayment: isNaN(monthlyPayment) ? 0 : monthlyPayment,
+      totalRepayment: isNaN(totalRepayment) ? 0 : totalRepayment
+    };
+  }
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <StatusBar 
@@ -698,19 +866,22 @@ export default function TransactionsScreen() {
         backgroundColor={isDarkMode ? '#1a1a1a' : AppColors.primary}
       />
       
-      {/* Balance Header */}
+      {/* Balance Header with transparent backgrounds */}
       <View style={[styles.header, { backgroundColor: AppColors.secondary }]}>
-        <View style={styles.balanceHeaderContainer}>
-          <Text style={styles.balanceLabel}>Total Balance</Text>
+        <View style={[styles.balanceHeaderContainer, { backgroundColor: 'transparent' }]}>
+          <Text style={[styles.balanceLabel, { backgroundColor: 'transparent' }]}>Total Balance</Text>
           <Text style={[
             styles.balanceAmount, 
-            { color: balance >= 0 ? '#4ade80' : '#f87171' }
+            { 
+              color: balance >= 0 ? '#4ade80' : '#f87171',
+              backgroundColor: 'transparent' 
+            }
           ]}>
             {balance >= 0 ? '+' : ''}{transactions[0]?.currency || 'USD'} {Math.abs(balance).toFixed(2)}
           </Text>
         </View>
         
-        {/* Monthly Summary */}
+        {/* Monthly Summary with transparent backgrounds */}
         {monthlySummary && (
           <Animated.View 
             style={[
@@ -720,25 +891,28 @@ export default function TransactionsScreen() {
                 transform: [{ translateY: summaryAnimation.interpolate({
                   inputRange: [0, 1],
                   outputRange: [20, 0]
-                })}]
+                })}],
+                backgroundColor: 'transparent'
               }
             ]}
           >
-            <Text style={styles.summaryPeriod}>{monthlySummary.period}</Text>
+            <Text style={[styles.summaryPeriod, { backgroundColor: 'transparent' }]}>
+              {monthlySummary.period}
+            </Text>
             
-            <View style={styles.summaryRow}>
-              <View style={styles.summaryItem}>
-                <Text style={styles.summaryLabel}>Income</Text>
-                <Text style={[styles.summaryValue, { color: '#4ade80' }]}>
+            <View style={[styles.summaryRow, { backgroundColor: 'transparent' }]}>
+              <View style={[styles.summaryItem, { backgroundColor: 'transparent' }]}>
+                <Text style={[styles.summaryLabel, { backgroundColor: 'transparent' }]}>Income</Text>
+                <Text style={[styles.summaryValue, { color: '#4ade80', backgroundColor: 'transparent' }]}>
                   +{monthlySummary.currency} {monthlySummary.income.toFixed(2)}
                 </Text>
               </View>
               
-              <View style={styles.summaryDivider} />
+              <View style={[styles.summaryDivider, { backgroundColor: 'rgba(255,255,255,0.2)' }]} />
               
-              <View style={styles.summaryItem}>
-                <Text style={styles.summaryLabel}>Expenses</Text>
-                <Text style={[styles.summaryValue, { color: '#f87171' }]}>
+              <View style={[styles.summaryItem, { backgroundColor: 'transparent' }]}>
+                <Text style={[styles.summaryLabel, { backgroundColor: 'transparent' }]}>Expenses</Text>
+                <Text style={[styles.summaryValue, { color: '#f87171', backgroundColor: 'transparent' }]}>
                   -{monthlySummary.currency} {monthlySummary.expenses.toFixed(2)}
                 </Text>
               </View>
@@ -754,23 +928,23 @@ export default function TransactionsScreen() {
             Recent Transactions
           </Text>
           
-          <View style={styles.headerActions}>
+          <View style={[styles.headerActions, { backgroundColor: 'transparent' }]}>
             <TouchableOpacity 
-              style={styles.actionButton}
+              style={[styles.actionButton, { backgroundColor: 'transparent' }]}
               onPress={() => exportToCSV()}
             >
               <FontAwesome name="file-text-o" size={18} color={AppColors.primary} />
             </TouchableOpacity>
             
             <TouchableOpacity 
-              style={styles.actionButton}
+              style={[styles.actionButton, { backgroundColor: 'transparent' }]}
               onPress={() => exportToPDF()}
             >
               <FontAwesome name="file-pdf-o" size={18} color={AppColors.primary} />
             </TouchableOpacity>
             
             <TouchableOpacity 
-              style={styles.actionButton}
+              style={[styles.actionButton, { backgroundColor: 'transparent' }]}
               onPress={() => loadTransactions()}
             >
               <FontAwesome name="refresh" size={18} color={AppColors.primary} />
@@ -817,7 +991,7 @@ export default function TransactionsScreen() {
         <FontAwesome name="plus" size={24} color="white" />
       </TouchableOpacity>
       
-      {/* Transaction Modal */}
+      {/* Transaction Modal - MODERNIZED */}
       <Modal
         animationType="slide"
         transparent={true}
@@ -829,62 +1003,74 @@ export default function TransactionsScreen() {
             behavior={Platform.OS === "ios" ? "padding" : "height"}
             style={styles.modalContainer}
           >
-            <View style={[styles.modalContent, { backgroundColor: colors.cardBackground }]}>
-              {/* Modal Header Tabs - Updated styling */}
-              <View style={styles.tabsContainer}>
-                <Pressable 
-                  style={[
-                    styles.tabButton, 
-                    !newTransaction.isIncome && styles.activeTabButton,
-                    { borderBottomColor: !newTransaction.isIncome ? AppColors.danger : 'transparent' }
-                  ]}
-                  onPress={() => setNewTransaction({...newTransaction, isIncome: false})}
-                >
-                  <Text style={[
-                    styles.tabText, 
-                    { color: !newTransaction.isIncome ? AppColors.white : colors.subText }
-                  ]}>
-                    Expense
-                  </Text>
-                </Pressable>
-                
-                <Pressable 
-                  style={[
-                    styles.tabButton, 
-                    newTransaction.isIncome && styles.activeTabButton,
-                    { borderBottomColor: newTransaction.isIncome ? AppColors.primary : 'transparent' }
-                  ]}
-                  onPress={() => setNewTransaction({...newTransaction, isIncome: true})}
-                >
-                  <Text style={[
-                    styles.tabText, 
-                    { color: newTransaction.isIncome ? AppColors.white : colors.subText }
-                  ]}>
-                    Income
-                  </Text>
-                </Pressable>
+            <View style={[styles.modalContent, { 
+              backgroundColor: colors.cardBackground,
+            }]}>
+              {/* Modern Tabs with Pill Design */}
+              <View style={[
+                styles.modernTabContainer, 
+                { backgroundColor: 'transparent' }
+              ]}>
+                <View style={[
+                  styles.modernTabPill, 
+                  { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }
+                ]}>
+                  <Pressable 
+                    style={[
+                      styles.modernTabButton, 
+                      !newTransaction.isIncome && { 
+                        backgroundColor: AppColors.danger,
+                        borderRadius: 20
+                      }
+                    ]}
+                    onPress={() => setNewTransaction({...newTransaction, isIncome: false})}
+                  >
+                    <Text style={[
+                      styles.modernTabText, 
+                      { color: !newTransaction.isIncome ? '#fff' : colors.subText }
+                    ]}>
+                      Expense
+                    </Text>
+                  </Pressable>
+                  
+                  <Pressable 
+                    style={[
+                      styles.modernTabButton, 
+                      newTransaction.isIncome && { 
+                        backgroundColor: AppColors.primary,
+                        borderRadius: 20
+                      }
+                    ]}
+                    onPress={() => setNewTransaction({...newTransaction, isIncome: true})}
+                  >
+                    <Text style={[
+                      styles.modernTabText, 
+                      { color: newTransaction.isIncome ? '#fff' : colors.subText }
+                    ]}>
+                      Income
+                    </Text>
+                  </Pressable>
+                </View>
               </View>
               
-              {/* Amount Input - Updated styling */}
+              {/* Modern Amount Input - Fixed border issues */}
               <View style={[
-                styles.amountInputContainer, 
-                { 
-                  borderColor: newTransaction.isIncome ? AppColors.primary : AppColors.danger,
-                  backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)'
-                }
+                styles.modernAmountContainer, 
+                { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)' }
               ]}>
                 <Text style={[
-                  styles.currencySymbol,
+                  styles.modernCurrencySymbol,
                   { color: newTransaction.isIncome ? AppColors.primary : AppColors.danger }
                 ]}>
                   $
                 </Text>
                 <TextInput
                   style={[
-                    styles.amountInput,
+                    styles.modernAmountInput,
                     { color: newTransaction.isIncome ? AppColors.primary : AppColors.danger }
                   ]}
                   placeholder="0.00"
+                  placeholderTextColor={isDarkMode ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.3)'}
                   keyboardType="decimal-pad"
                   value={newTransaction.amount}
                   onChangeText={(text) => {
@@ -899,13 +1085,11 @@ export default function TransactionsScreen() {
                 />
               </View>
               
-              {/* Date & Category Row - Updated styling */}
-              <View style={styles.fieldRow}>
+              {/* Date & Category Row - Modern styling */}
+              <View style={[styles.modernFieldRow, { backgroundColor: 'transparent' }]}>
                 <Pressable 
-                  style={[styles.dateField, { 
+                  style={[styles.modernDateField, { 
                     backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)',
-                    borderWidth: 1,
-                    borderColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'
                   }]}
                   onPress={() => openDatePicker('transactionDate')}
                 >
@@ -916,7 +1100,7 @@ export default function TransactionsScreen() {
                 </Pressable>
                 
                 <Pressable 
-                  style={[styles.categorySelector, { backgroundColor: getCategoryColor(newTransaction.category) }]}
+                  style={[styles.modernCategorySelector, { backgroundColor: getCategoryColor(newTransaction.category) }]}
                   onPress={() => setShowCategoriesSelector(true)}
                 >
                   <Text style={{ color: '#fff', fontWeight: '500' }}>
@@ -926,36 +1110,266 @@ export default function TransactionsScreen() {
                 </Pressable>
               </View>
               
-              {/* Loan Deadline - New section for loan transactions */}
-              {newTransaction.category === 'Loan' && (
-                <View style={{ marginBottom: 15 }}>
-                  <Text style={[styles.inputLabel, { color: colors.text, marginTop: 10 }]}>
-                    Loan Deadline
+              {/* Transaction Type Selector - New Section */}
+              {(newTransaction.category === 'Loan' || newTransaction.category === 'Investment') && (
+                <View style={{ marginBottom: 20, backgroundColor: 'transparent' }}>
+                  <Text style={[styles.modernInputLabel, { color: colors.text }]}>
+                    Transaction Type
+                  </Text>
+                  <View style={[styles.modernTypeSelector, { backgroundColor: 'transparent' }]}>
+                    {newTransaction.category === 'Loan' ? (
+                      <>
+                        <TouchableOpacity
+                          style={[
+                            styles.modernTypeButton,
+                            {
+                              backgroundColor: newTransaction.transaction_type === 'loan' 
+                                ? '#FF9800' : isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)'
+                            }
+                          ]}
+                          onPress={() => setNewTransaction({...newTransaction, transaction_type: 'loan'})}
+                        >
+                          <Text style={{
+                            color: newTransaction.transaction_type === 'loan' ? '#fff' : colors.text,
+                            fontWeight: '500'
+                          }}>
+                            Take Loan
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[
+                            styles.modernTypeButton,
+                            {
+                              backgroundColor: newTransaction.transaction_type === 'loan_repayment' 
+                                ? AppColors.danger : isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)'
+                            }
+                          ]}
+                          onPress={() => setNewTransaction({...newTransaction, transaction_type: 'loan_repayment'})}
+                        >
+                          <Text style={{
+                            color: newTransaction.transaction_type === 'loan_repayment' ? '#fff' : colors.text,
+                            fontWeight: '500'
+                          }}>
+                            Loan Repayment
+                          </Text>
+                        </TouchableOpacity>
+                      </>
+                    ) : (
+                      <>
+                        <TouchableOpacity
+                          style={[
+                            styles.modernTypeButton,
+                            {
+                              backgroundColor: newTransaction.transaction_type === 'investment' 
+                                ? '#FF9800' : isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)'
+                            }
+                          ]}
+                          onPress={() => setNewTransaction({...newTransaction, transaction_type: 'investment'})}
+                        >
+                          <Text style={{
+                            color: newTransaction.transaction_type === 'investment' ? '#fff' : colors.text,
+                            fontWeight: '500'
+                          }}>
+                            Make Investment
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[
+                            styles.modernTypeButton,
+                            {
+                              backgroundColor: newTransaction.transaction_type === 'investment_return' 
+                                ? AppColors.primary : isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)'
+                            }
+                          ]}
+                          onPress={() => setNewTransaction({...newTransaction, transaction_type: 'investment_return'})}
+                        >
+                          <Text style={{
+                            color: newTransaction.transaction_type === 'investment_return' ? '#fff' : colors.text,
+                            fontWeight: '500'
+                          }}>
+                            Investment Return
+                          </Text>
+                        </TouchableOpacity>
+                      </>
+                    )}
+                  </View>
+                </View>
+              )}
+
+              {/* Loan-specific fields */}
+              {(newTransaction.category === 'Loan' && newTransaction.transaction_type === 'loan') && (
+                <View style={{ backgroundColor: 'transparent' }}>
+                  <Text style={[styles.modernInputLabel, { color: colors.text }]}>
+                    Interest Rate (% per year)
+                  </Text>
+                  <TextInput
+                    style={[
+                      styles.modernFieldInput,
+                      { 
+                        backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)',
+                        color: colors.text
+                      }
+                    ]}
+                    placeholder="5.0"
+                    placeholderTextColor={isDarkMode ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.3)'}
+                    keyboardType="decimal-pad"
+                    value={newTransaction.interest_rate}
+                    onChangeText={(text) => setNewTransaction({...newTransaction, interest_rate: text})}
+                  />
+                  
+                  <Text style={[styles.modernInputLabel, { color: colors.text }]}>
+                    Lender Name (Optional)
+                  </Text>
+                  <TextInput
+                    style={[
+                      styles.modernFieldInput,
+                      { 
+                        backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)',
+                        color: colors.text
+                      }
+                    ]}
+                    placeholder="Bank name or person"
+                    placeholderTextColor={isDarkMode ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.3)'}
+                    value={newTransaction.lender_name}
+                    onChangeText={(text) => setNewTransaction({...newTransaction, lender_name: text})}
+                  />
+                  
+                  {/* Loan calculations preview */}
+                  {newTransaction.amount && newTransaction.interest_rate && newTransaction.deadline && (
+                    <View style={[styles.calculationPreview, { 
+                      backgroundColor: isDarkMode ? 'rgba(255,152,0,0.1)' : 'rgba(255,152,0,0.1)',
+                      borderColor: '#FF9800'
+                    }]}>
+                      <Text style={[styles.calculationTitle, { color: '#FF9800' }]}>Loan Calculation</Text>
+                      {(() => {
+                        const { monthlyPayment, totalRepayment } = calculateLoanDetails(
+                          parseFloat(newTransaction.amount), 
+                          parseFloat(newTransaction.interest_rate), 
+                          newTransaction.deadline
+                        );
+                        return (
+                          <>
+                            <Text style={[styles.calculationText, { color: colors.text }]}>
+                              Monthly Payment: ${monthlyPayment.toFixed(2)}
+                            </Text>
+                            <Text style={[styles.calculationText, { color: colors.text }]}>
+                              Total Repayment: ${totalRepayment.toFixed(2)}
+                            </Text>
+                            <Text style={[styles.calculationText, { color: colors.text }]}>
+                              Total Interest: ${(totalRepayment - parseFloat(newTransaction.amount)).toFixed(2)}
+                            </Text>
+                          </>
+                        );
+                      })()}
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {/* Investment-specific fields */}
+              {(newTransaction.category === 'Investment' && newTransaction.transaction_type === 'investment') && (
+                <View style={{ backgroundColor: 'transparent' }}>
+                  <Text style={[styles.modernInputLabel, { color: colors.text }]}>
+                    Expected ROI (% per year)
+                  </Text>
+                  <TextInput
+                    style={[
+                      styles.modernFieldInput,
+                      { 
+                        backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)',
+                        color: colors.text
+                      }
+                    ]}
+                    placeholder="12.0"
+                    placeholderTextColor={isDarkMode ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.3)'}
+                    keyboardType="decimal-pad"
+                    value={newTransaction.roi_percentage}
+                    onChangeText={(text) => setNewTransaction({...newTransaction, roi_percentage: text})}
+                  />
+                  
+                  <Text style={[styles.modernInputLabel, { color: colors.text }]}>
+                    Investment Platform (Optional)
+                  </Text>
+                  <TextInput
+                    style={[
+                      styles.modernFieldInput,
+                      { 
+                        backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)',
+                        color: colors.text
+                      }
+                    ]}
+                    placeholder="Stock exchange, crypto platform, etc."
+                    placeholderTextColor={isDarkMode ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.3)'}
+                    value={newTransaction.investment_platform}
+                    onChangeText={(text) => setNewTransaction({...newTransaction, investment_platform: text})}
+                  />
+                  
+                  {/* Investment return preview */}
+                  {newTransaction.amount && newTransaction.roi_percentage && (
+                    <View style={[styles.calculationPreview, { 
+                      backgroundColor: isDarkMode ? 'rgba(255,152,0,0.1)' : 'rgba(255,152,0,0.1)',
+                      borderColor: '#FF9800'
+                    }]}>
+                      <Text style={[styles.calculationTitle, { color: '#FF9800' }]}>Investment Projection</Text>
+                      <Text style={[styles.calculationText, { color: colors.text }]}>
+                        Estimated Annual Return: ${calculateInvestmentReturn(
+                          parseFloat(newTransaction.amount), 
+                          parseFloat(newTransaction.roi_percentage)
+                        ).toFixed(2)}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              )}
+              
+              {/* Deadline Selector for Loans and Investments */}
+              {(newTransaction.category === 'Loan' || newTransaction.category === 'Investment') && (
+                <View style={{ backgroundColor: 'transparent', marginBottom: 15 }}>
+                  <Text style={[styles.modernInputLabel, { color: colors.text }]}>
+                    {newTransaction.category === 'Loan' ? 'Loan Deadline' : 'Investment Maturity Date'} (Optional)
                   </Text>
                   <Pressable 
-                    style={[styles.dateField, { 
+                    style={[styles.modernDateField, { 
                       backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)',
+                      marginRight: 0, // Remove right margin since it's full width
                       borderWidth: 1,
                       borderColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'
                     }]}
                     onPress={() => openDatePicker('loanDeadline')}
                   >
-                    <FontAwesome name="calendar" size={16} color={AppColors.danger} style={{ marginRight: 8 }} />
-                    <Text style={{ color: colors.text }}>
-                      {newTransaction.deadline ? new Date(newTransaction.deadline).toLocaleDateString() : 'Select deadline...'}
+                    <FontAwesome name="calendar" size={16} color={colors.text} style={{ marginRight: 8 }} />
+                    <Text style={{ color: colors.text, flex: 1 }}>
+                      {newTransaction.deadline 
+                        ? new Date(newTransaction.deadline).toLocaleDateString()
+                        : `Select ${newTransaction.category === 'Loan' ? 'deadline' : 'maturity date'}...`
+                      }
                     </Text>
+                    <FontAwesome name="chevron-right" size={12} color={colors.subText} />
                   </Pressable>
+                  
+                  {/* Clear deadline button */}
+                  {newTransaction.deadline && (
+                    <TouchableOpacity 
+                      style={{
+                        alignSelf: 'flex-end',
+                        marginTop: 5,
+                        paddingVertical: 5,
+                        paddingHorizontal: 10
+                      }}
+                      onPress={() => setNewTransaction({...newTransaction, deadline: ''})}
+                    >
+                      <Text style={{ color: AppColors.danger, fontSize: 12 }}>Clear Date</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               )}
               
-              {/* Note Input - Updated styling */}
+              {/* Note Input - Modern styling */}
               <TextInput
                 style={[
-                  styles.noteInput,
+                  styles.modernNoteInput,
                   { 
                     backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)', 
-                    borderWidth: 1,
-                    borderColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
                     color: colors.text
                   }
                 ]}
@@ -967,11 +1381,11 @@ export default function TransactionsScreen() {
                 numberOfLines={3}
               />
               
-              {/* Action Buttons - Updated styling */}
-              <View style={styles.actions}>
+              {/* Action Buttons - Modern styling */}
+              <View style={[styles.modernActions, { backgroundColor: 'transparent' }]}>
                 <TouchableOpacity 
-                  style={[styles.cancelButton, { 
-                    borderColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'
+                  style={[styles.modernCancelButton, { 
+                    backgroundColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)'
                   }]}
                   onPress={() => setModalVisible(false)}
                 >
@@ -980,7 +1394,7 @@ export default function TransactionsScreen() {
                 
                 <TouchableOpacity 
                   style={[
-                    styles.saveButton,
+                    styles.modernSaveButton,
                     { backgroundColor: newTransaction.isIncome ? AppColors.primary : AppColors.danger }
                   ]}
                   onPress={handleAddTransaction}
@@ -1077,7 +1491,7 @@ export default function TransactionsScreen() {
         </Modal>
       )}
       
-      {/* Categories Selector Modal */}
+      {/* Categories Selector Modal with 2-column grid */}
       <Modal
         animationType="slide"
         transparent={true}
@@ -1085,43 +1499,60 @@ export default function TransactionsScreen() {
         onRequestClose={() => setShowCategoriesSelector(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.modernCategoriesModal, { backgroundColor: colors.cardBackground }]}>
-            <View style={styles.categoriesHeader}>
-              <Text style={[styles.categoriesTitle, { color: colors.text }]}>
+          <View style={[styles.modernCategoriesModal, { 
+            backgroundColor: colors.cardBackground,
+            maxHeight: '80%' // Limit height to prevent extending beyond viewport
+          }]}>
+            <View style={[
+              styles.modernCategHeader,
+              {
+                backgroundColor: 'transparent',
+                borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)'
+              }
+            ]}>
+              <Text style={[styles.modernCategTitle, { color: colors.text, backgroundColor: 'transparent' }]}>
                 Select {newTransaction.isIncome ? 'Income' : 'Expense'} Category
               </Text>
               
-              <View style={styles.categoryHeaderButtons}>
+              <View style={[styles.modernCategButtons, { backgroundColor: 'transparent' }]}>
                 <TouchableOpacity 
-                  style={styles.addCategoryButton}
+                  style={[styles.modernAddCategBtn, { backgroundColor: 'transparent' }]}
                   onPress={() => {
-                    setShowCategoriesSelector(false); // Close categories selector
-                    setModalVisible(false); // Close the main modal as well
+                    // Close both modals
+                    setShowCategoriesSelector(false);
+                    setModalVisible(false); // Close the transaction modal as well
+                    
+                    // Then navigate to category management
                     router.push({
                       pathname: '/categoryManagement',
                       params: { 
                         type: newTransaction.isIncome ? 'income' : 'expense',
-                        from: 'transaction' // Add this to track where we came from
+                        from: 'transaction'
                       }
                     });
                   }}
                 >
                   <FontAwesome name="plus" size={16} color={AppColors.primary} />
-                  <Text style={{ color: AppColors.primary, marginLeft: 5 }}>New</Text>
+                  <Text style={{ color: AppColors.primary, marginLeft: 5, backgroundColor: 'transparent' }}>New</Text>
                 </TouchableOpacity>
                 
-                <TouchableOpacity onPress={() => setShowCategoriesSelector(false)}>
+                <TouchableOpacity 
+                  style={{ backgroundColor: 'transparent' }}
+                  onPress={() => setShowCategoriesSelector(false)}
+                >
                   <FontAwesome name="times" size={20} color={colors.text} />
                 </TouchableOpacity>
               </View>
             </View>
             
+            {/* Changed to FlatList with numColumns={2} for 2-column grid */}
             <FlatList
               data={getAvailableCategories()}
+              numColumns={2}
               renderItem={({ item }) => (
                 <TouchableOpacity
                   style={[
-                    styles.modernCategoryItem,
+                    styles.categoryGridItem, // New style for grid items
                     {
                       backgroundColor: newTransaction.category === item.name ?
                         item.color : isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
@@ -1142,127 +1573,28 @@ export default function TransactionsScreen() {
                   <Text style={{
                     color: newTransaction.category === item.name ? '#fff' : colors.text,
                     fontWeight: newTransaction.category === item.name ? 'bold' : 'normal',
-                    marginLeft: 10,
-                    flex: 1
+                    textAlign: 'center',
+                    marginTop: 8,
+                    backgroundColor: 'transparent'
                   }}>
                     {item.name}
                   </Text>
                   {newTransaction.category === item.name && (
-                    <FontAwesome name="check" size={16} color="#fff" />
+                    <View style={styles.checkIconContainer}>
+                      <FontAwesome name="check" size={14} color="#fff" />
+                    </View>
                   )}
                 </TouchableOpacity>
               )}
               keyExtractor={item => item.name}
               showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.modernCategoriesList}
+              contentContainerStyle={styles.categoriesGridList}
             />
           </View>
         </View>
       </Modal>
       
-      {/* Add New Category Modal */}
-      <Modal
-        animationType="fade"
-        transparent={true}
-        visible={showCategoryModal}
-        onRequestClose={() => setShowCategoryModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.categoryFormModal, { backgroundColor: colors.cardBackground }]}>
-            <View style={styles.categoriesHeader}>
-              <Text style={[styles.categoriesTitle, { color: colors.text }]}>Add New Category</Text>
-              <TouchableOpacity onPress={() => setShowCategoryModal(false)}>
-                <FontAwesome name="times" size={20} color={colors.text} />
-              </TouchableOpacity>
-            </View>
-            
-            <Text style={[styles.inputLabel, { color: colors.text, marginTop: 10 }]}>Name</Text>
-            <TextInput
-              style={[styles.categoryInput, { 
-                backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)',
-                borderWidth: 1,
-                borderColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)', 
-                color: colors.text
-              }]}
-              placeholder="Category name"
-              placeholderTextColor={isDarkMode ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.3)'}
-              value={newCategoryName}
-              onChangeText={setNewCategoryName}
-            />
-            
-            <Text style={[styles.inputLabel, { color: colors.text, marginTop: 15 }]}>Color</Text>
-            <View style={styles.colorGrid}>
-              {CATEGORY_COLORS.map(color => (
-                <TouchableOpacity 
-                  key={color}
-                  style={[
-                    styles.colorOption,
-                    {
-                      backgroundColor: color,
-                      borderWidth: selectedCategoryColor === color ? 2 : 0,
-                      borderColor: isDarkMode ? '#fff' : '#000'
-                    }
-                  ]}
-                  onPress={() => setSelectedCategoryColor(color)}
-                />
-              ))}
-            </View>
-            
-            <View style={[styles.actions, { marginTop: 20 }]}>
-              <TouchableOpacity 
-                style={[styles.cancelButton, { 
-                  borderColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'
-                }]}
-                onPress={() => setShowCategoryModal(false)}
-              >
-                <Text style={{ color: colors.text }}>Cancel</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={[styles.saveButton, { backgroundColor: AppColors.primary }]}
-                onPress={() => {
-                  if (newCategoryName.trim()) {
-                    setLoading(true);
-                    // Create the category object
-                    const categoryType = newTransaction.isIncome ? 'income' as const : 'expense' as const;
-                    const newCategory = {
-                      name: newCategoryName.trim(),
-                      color: selectedCategoryColor,
-                      icon: 'apps', // Default icon
-                      type: categoryType // Type is now properly typed
-                    };
-                    
-                    // Call the API to save the category
-                    addCategory(newCategory.name, newCategory.color, newCategory.type)
-                      .then(() => {
-                        // Add to local state
-                        setCategories([...categories, newCategory]);
-                        setNewCategoryName('');
-                        setSelectedCategoryColor('#FF5722');
-                        setShowCategoryModal(false);
-                        
-                        // Select the new category
-                        setNewTransaction({...newTransaction, category: newCategory.name});
-                        
-                        showAlert('Success', 'Category added successfully', 'success');
-                      })
-                      .catch(error => {
-                        console.error('Error adding category:', error);
-                        const errorMessage = error.response?.data?.error || 'Failed to add category';
-                        showAlert('Error', errorMessage, 'error');
-                      })
-                      .finally(() => {
-                        setLoading(false);
-                      });
-                  }
-                }}
-              >
-                <Text style={{ color: '#fff', fontWeight: '600' }}>Add Category</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+
     </SafeAreaView>
   );
 }
@@ -1280,6 +1612,7 @@ const styles = StyleSheet.create({
   },
   balanceHeaderContainer: {
     alignItems: 'center',
+    backgroundColor: 'transparent',
   },
   balanceLabel: {
     fontSize: 16,
@@ -1305,10 +1638,12 @@ const styles = StyleSheet.create({
   summaryRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    backgroundColor: 'transparent',
   },
   summaryItem: {
     flex: 1,
     alignItems: 'center',
+    backgroundColor: 'transparent',
   },
   summaryDivider: {
     width: 1,
@@ -1453,12 +1788,14 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     borderRadius: 8,
     overflow: 'hidden',
+    backgroundColor: 'transparent',
   },
   tabButton: {
     flex: 1,
     alignItems: 'center',
     paddingVertical: 12,
     borderBottomWidth: 2,
+    backgroundColor: 'transparent',
   },
   activeTabButton: {
     backgroundColor: AppColors.primary,
@@ -1613,9 +1950,11 @@ const styles = StyleSheet.create({
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: 'transparent',
   },
   actionButton: {
     marginLeft: 15,
+    backgroundColor: 'transparent',
   },
   deleteButton: {
     marginTop: 8,
@@ -1635,12 +1974,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: 8,
+    backgroundColor: 'transparent',
   },
   actionIconButton: {
     padding: 8,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: 'transparent',
   },
   modalHeader: {
     marginBottom: 20,
@@ -1662,21 +2003,302 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  modernTabContainer: {
+    marginBottom: 25,
+    alignItems: 'center',
+    backgroundColor: 'transparent',
+  },
+  modernTabPill: {
+    flexDirection: 'row',
+    borderRadius: 20,
+    padding: 4,
+    width: '80%',
+  },
+  modernTabButton: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 20,
+  },
+  modernTabText: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  modernAmountContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 25,
+    paddingHorizontal: 20,
+    paddingVertical: 5,
+    borderRadius: 12,
+  },
+  modernCurrencySymbol: {
+    fontSize: 28,
+    fontWeight: '500',
+    marginRight: 5,
+  },
+  modernAmountInput: {
+    flex: 1,
+    fontSize: 28,
+    paddingVertical: 15,
+    borderWidth: 0,
+    outlineWidth: 0,
+    fontWeight: '500',
+  },
+  modernFieldRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 20,
+  },
+  modernDateField: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 12,
+    marginRight: 10,
+  },
+  modernCategorySelector: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  modernInputLabel: {
+    fontSize: 15,
+    fontWeight: '500',
+    marginBottom: 8,
+    marginTop: 8,
+    backgroundColor: 'transparent',
+  },
+  modernNoteInput: {
+    padding: 16,
+    borderRadius: 12,
+    minHeight: 120,
+    textAlignVertical: 'top',
+    marginBottom: 25,
+    borderWidth: 0,
+  },
+  modernActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: 'transparent',
+    marginTop: 5, // Add a little margin to separate from content above
+  },
+  modernCancelButton: {
+    flex: 1,
+    paddingVertical: 15,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  modernSaveButton: {
+    flex: 1.5,
+    paddingVertical: 15,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
   modernCategoriesModal: {
     width: '90%',
     maxWidth: 400,
-    borderRadius: 15,
+    borderRadius: 20,
     padding: 20,
-    maxHeight: '70%', // Limit the height to 70% of screen
+    maxHeight: '80%', // Limit height
   },
-  modernCategoriesList: {
-    paddingVertical: 10,
+  modernCategHeader: { // Added style for the category modal header
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    width: '100%', // Ensure it spans the modal width
+    paddingHorizontal: 15,
+    paddingVertical: 12,
+    borderBottomWidth: 1, // The borderBottomColor is applied inline in the JSX
+    marginBottom: 10, // Space between header and the list of categories
   },
-  modernCategoryItem: {
+  modernCategTitle: {
+    fontSize: 17,
+    fontWeight: 'bold',
+  },
+  modernCategButtons: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  modernAddCategBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 15,
+    paddingVertical:  6,
+    paddingHorizontal: 10,
+    borderRadius: 15,
+  },
+  categoriesGridList: {
+    paddingBottom: 20,
+    paddingHorizontal: 5,
+  },
+  categoryGridItem: {
+    width: '47%', // Slightly less than 50% to allow for margin
+    margin: '1.5%',
     padding: 15,
-    borderRadius: 8,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 100,
+    position: 'relative', // For positioning the check icon
+  },
+  checkIconContainer: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: 'rgba(0,0,0,0.2)',
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modernTypeSelector: {
+    flexDirection: 'row',
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginBottom: 15,
+  },
+  modernTypeButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 2,
+    borderRadius: 10,
+  },
+  modernFieldInput: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: 12,
+    marginBottom: 15,
+    borderWidth: 0,
+  },
+  calculationPreview: {
+    borderRadius: 12,
+    padding: 15,
+    marginTop: 10,
+    marginBottom: 15,
+    borderWidth: 1,
+  },
+  calculationTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
     marginBottom: 8,
   },
+  calculationText: {
+    fontSize: 14,
+    marginBottom: 4,
+  },
+  detailText: {
+    fontSize: 12,
+    fontWeight: '500',
+    marginTop: 2,
+  },
+  statusText: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    marginTop: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
 });
+
+// Update your balance calculation
+const calculateEnhancedBalance = (transactions: Transaction[]) => {
+  let totalBalance = 0;
+  let activeLoans = 0;
+  let totalInvestments = 0;
+  let projectedReturns = 0;
+  
+  transactions.forEach(t => {
+    switch (t.transaction_type) {
+      case 'loan':
+        totalBalance += t.amount; // Loans add to balance initially
+        activeLoans += t.amount;
+        break;
+      case 'loan_repayment':
+        totalBalance -= t.amount; // Repayments reduce balance
+        break;
+      case 'investment':
+        totalBalance -= t.amount; // Investments reduce balance
+        totalInvestments += t.amount;
+        if (t.roi_percentage) {
+          projectedReturns += calculateInvestmentReturn(t.amount, parseFloat(t.roi_percentage.toString()));
+        }
+        break;
+      case 'investment_return':
+        totalBalance += t.amount; // Returns add to balance
+        break;
+      default:
+        totalBalance += t.amount; // Regular transactions
+        break;
+    }
+  });
+  
+  return {
+    totalBalance,
+    activeLoans,
+    totalInvestments,
+    projectedReturns
+  };
+};
+
+// Helper to get a label for the transaction type or category
+function getTransactionTypeLabel(item: Transaction): string {
+  switch (item.transaction_type) {
+    case 'loan':
+      return 'Loan';
+    case 'loan_repayment':
+      return 'Loan Repayment';
+    case 'investment':
+      return 'Investment';
+    case 'investment_return':
+      return 'Investment Return';
+    default:
+      return item.category || 'Transaction';
+  }
+}
+
+// getTransactionTypeColor helper function
+function getTransactionTypeColor(item: {
+  id: string; amount: number; currency: string; date: string; category: string; note?: string; deadline?: string;
+  transaction_type?: "regular" | "loan" | "investment" | "loan_repayment" | "investment_return"; interest_rate?: number;
+  roi_percentage?: number;
+  lender_name?: string;
+  investment_platform?: string;
+  status?: "active" | "repaid" | "matured" | "pending"; linked_transaction_id?: string;
+}): import("react-native").ColorValue | undefined {
+  // Use AppColors for consistency
+  switch (item.transaction_type) {
+    case 'loan':
+      return '#FF9800'; // Orange for loans
+    case 'loan_repayment':
+      return AppColors.danger; // Red for repayments
+    case 'investment':
+      return '#2196F3'; // Blue for investments
+    case 'investment_return':
+      return AppColors.primary; // Green for returns
+    default:
+      // Fallback: positive = income, negative = expense
+      return item.amount >= 0 ? AppColors.primary : AppColors.danger;
+  }
+}
+// Calculates the estimated annual return for an investment
+function calculateInvestmentReturn(amount: number, roi_percentage: number) {
+  // roi_percentage is annual ROI in percent (e.g., 12 for 12%)
+  // Simple interest for 1 year: return = amount * (roi_percentage / 100)
+  return amount * (roi_percentage / 100);
+}
+

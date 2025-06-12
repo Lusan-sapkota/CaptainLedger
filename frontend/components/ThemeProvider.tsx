@@ -30,7 +30,7 @@ const lightColors = {
 
 const darkColors = {
   background: '#121212',
-  cardBackground: '#1E1E1E',
+  cardBackground: '#1E1E1E', 
   text: '#FFFFFF',
   subText: '#AAAAAA',
   border: 'rgba(255,255,255,0.1)',

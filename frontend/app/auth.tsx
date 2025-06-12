@@ -307,17 +307,18 @@ export default function AuthScreen() {
     setStatusMessage(`Authenticating ${loginData.email}...`); // Show email in status
     
     try {
-      // Get device ID
+      // Get device ID and check if device is trusted
       const deviceId = await getDeviceIdentifier();
+      const isDeviceTrusted = await AsyncStorage.getItem(`trusted_device_${deviceId}`);
       
       // Show connecting message
       setStatusMessage(`Connecting to server...`);
       await new Promise(resolve => setTimeout(resolve, 400));
       
       setStatusMessage(`Verifying credentials for ${loginData.email}...`);
-      const response = await login(loginData.email, loginData.password, deviceId);
+      const response = await login(loginData.email, loginData.password, deviceId, isDeviceTrusted === 'true');
       
-      setStatusMessage(`Sending authentication session to ${loginData.email}...`);
+      setStatusMessage(`Securing authentication session...`);
       await new Promise(resolve => setTimeout(resolve, 800)); // Show this message for a moment
       
       // Only proceed if we get a valid response with token
@@ -330,7 +331,7 @@ export default function AuthScreen() {
       expirationDate.setDate(expirationDate.getDate() + 30);
       const expirationTimestamp = expirationDate.toISOString();
       
-      // Store ALL required auth data in correct sequence
+      // Store ALL required auth data in correct sequence with extended session
       await AsyncStorage.multiSet([
         ['auth_token', response.data.token],
         ['user_id', response.data.user.id.toString()],
@@ -338,10 +339,21 @@ export default function AuthScreen() {
         ['is_authenticated', 'true'], // CRITICAL: Set this explicitly to 'true'
         ['is_offline_mode', 'false'], // Set this to false to be explicit
         ['is_guest_mode', 'false'],   // Set this to false to be explicit
-        ['auth_expiration', expirationTimestamp] // Add expiration timestamp
+        ['auth_expiration', expirationTimestamp], // 30-day expiration
+        ['device_id', deviceId], // Store device ID for trust management
+        ['session_created', new Date().toISOString()], // Track when session was created
+        ['last_activity', new Date().toISOString()], // Track last activity for session extension
       ]);
       
-      console.log('Auth data stored successfully');
+      // Mark device as trusted if "Remember me" is checked
+      if (rememberDevice) {
+        await AsyncStorage.setItem(`trusted_device_${deviceId}`, 'true');
+        await AsyncStorage.setItem(`trusted_device_name_${deviceId}`, Platform.OS);
+        await AsyncStorage.setItem(`trusted_device_date_${deviceId}`, new Date().toISOString());
+        console.log('Device marked as trusted');
+      }
+      
+      console.log('Auth data stored successfully with 30-day session');
       
       // Log login to history
       const loginHistory = await AsyncStorage.getItem('login_history') || '[]';
@@ -349,11 +361,12 @@ export default function AuthScreen() {
       history.push({
         date: new Date().toISOString(),
         device: Platform.OS,
-        type: 'login'
+        type: 'login',
+        trusted: rememberDevice
       });
       await AsyncStorage.setItem('login_history', JSON.stringify(history.slice(-10)));
       
-      setStatusMessage('Login successful!');
+      setStatusMessage('Login successful! Session secured for 30 days.');
       
       // Add a slightly longer delay to ensure storage is complete
       setTimeout(() => {
@@ -401,9 +414,9 @@ export default function AuthScreen() {
       // Registration API call...
       try {
         await register(
-          signupData.fullName,
           signupData.email,
           signupData.password,
+          signupData.fullName,
           signupData.country,
           signupData.gender
         );

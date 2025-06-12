@@ -1,76 +1,64 @@
-import axios from 'axios';
+import axios, { AxiosResponse } from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
-import { AxiosResponse } from 'axios'; 
-import { router } from 'expo-router';
 import * as Device from 'expo-device';
 
 // Default backend URL - different for iOS simulator vs Android emulator
 const getDefaultApiUrl = () => {
-  const LOCAL_PORT = '5000'; // This is correct, but needs to be enforced
+  const LOCAL_PORT = '5000';
   
-  // For web platform, instead of using a relative URL, specify the full URL with port
   if (Platform.OS === 'web') {
     return `http://localhost:${LOCAL_PORT}/api`;
   } else if (Platform.OS === 'ios') {
+    // For iOS devices & simulator
     return `http://localhost:${LOCAL_PORT}/api`;
   } else if (Platform.OS === 'android') {
+    // For Android emulator
     return `http://10.0.2.2:${LOCAL_PORT}/api`;
   } else {
-    return `http://localhost:${LOCAL_PORT}/api`;
+    // For Expo Go on physical devices, use your computer's local IP address
+    // Replace with your actual local network IP
+    return `http://192.168.18.2:${LOCAL_PORT}/api`;
   }
 };
 
-// Create axios instance with the dynamically determined URL
 const api = axios.create({
   baseURL: getDefaultApiUrl(),
-  timeout: 10000, // Reduce timeout for better user feedback
+  withCredentials: true, // This is crucial for CORS with credentials
   headers: {
     'Content-Type': 'application/json',
-  },
-  // Add withCredentials to help with CORS
-  withCredentials: Platform.OS === 'web'
+  }
 });
 
-// Add a request interceptor to add the token
+// Add request interceptor to include auth token on every request
 api.interceptors.request.use(
-  async (config) => {
+  async config => {
     const token = await AsyncStorage.getItem('auth_token');
-    
-    console.log(`Request to ${config.url} with token: ${token ? 'Present' : 'None'}`);
-    
-    if (token && !token.includes('offline') && !token.includes('guest')) {
-      config.headers['Authorization'] = `Bearer ${token}`;
-    } else if (config.url?.includes('/auth/')) {
-      console.log('No valid token for auth endpoint, request may fail');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
     }
-    
     return config;
   },
-  (error) => {
-    return Promise.reject(error);
-  }
+  error => Promise.reject(error)
 );
 
-// Update the API error interceptor
+// Update your interceptor to be more resilient
 api.interceptors.response.use(
-  (response) => response,
-  async (error) => {
-    if (error.response && error.response.status === 401) {
-      console.log('Authentication error: Invalid or expired token');
+  response => response,
+  async error => {
+    // Only redirect on genuine auth failures, not server errors
+    if (error.response?.status === 401) {
+      // Handle authentication errors
+      await AsyncStorage.multiRemove([
+        'auth_token', 'user_id', 'is_authenticated'
+      ]);
       
-      // Check if this is a login attempt (don't clear auth data on login failures)
-      const isLoginAttempt = error.config.url.includes('/login') || 
-                           error.config.url.includes('/register');
-      
-      if (!isLoginAttempt) {
-        // Only clear auth data for non-login requests that get 401s
-        await AsyncStorage.multiRemove([
-          'auth_token', 'user_id', 'user_email', 'is_authenticated'
-        ]);
-        
-        // Navigate back to auth
-        router.replace('/auth');
+      // Don't redirect if we're already on auth page
+      const currentPath = window.location?.pathname || '';
+      if (!currentPath.includes('/auth')) {
+        if (window.location) {
+          window.location.href = '/auth';
+        }
       }
     }
     return Promise.reject(error);
@@ -128,12 +116,13 @@ export const register = async (email: string, password: string, fullName: string
   }
 };
 
-export const login = async (email: string, password: string, deviceId?: string) => {
+export const login = async (email: string, password: string, deviceId?: string, isTrustedDevice?: boolean) => {
   try {
     const response = await api.post('/auth/login', {
       email,
       password,
-      deviceId // Pass the device ID to the API
+      deviceId, // Pass the device ID to the API
+      isTrustedDevice // Pass the trusted device flag
     });
     
     return response;
@@ -156,9 +145,34 @@ export interface Transaction {
   currency: string; 
   date: string; 
   category: string;
-  note: string;
+  note?: string;
+  deadline?: string;
+  transaction_type?: 'regular' | 'loan' | 'investment' | 'loan_repayment' | 'investment_return';
+  interest_rate?: number;
+  roi_percentage?: number;
+  lender_name?: string;
+  investment_platform?: string;
+  status?: 'active' | 'repaid' | 'matured' | 'pending';
+  linked_transaction_id?: string;
   created_at?: string;
   updated_at?: string;
+  // Add investment-specific fields
+  investment_id?: string;  // Link to Investment model
+  investment_name?: string;
+}
+
+// Add Loan interface
+export interface Loan {
+  id: string;
+  loan_type: 'given' | 'taken';
+  amount: number;
+  currency: string;
+  contact?: string;
+  status: 'outstanding' | 'paid';
+  date: string;
+  deadline?: string;
+  interest_rate?: number;
+  created_at?: string;
 }
 
 // Interface for API response with transactions
@@ -199,16 +213,16 @@ export const getTransactions = (filters: {
   return api.get<TransactionsResponse>('/transactions', { params: filters });
 };
 
-export const createTransaction = (transaction: CreateTransactionPayload): Promise<AxiosResponse<TransactionResponse>> => {
-  return api.post<TransactionResponse>('/transactions', transaction);
+export const createTransaction = (transactionData: Partial<Transaction>): Promise<AxiosResponse> => {
+  return api.post('/transactions', transactionData);
 };
 
-export const updateTransaction = (id: string, transaction: UpdateTransactionPayload): Promise<AxiosResponse<TransactionResponse>> => {
-  return api.put<TransactionResponse>(`/transactions/${id}`, transaction);
+export const updateTransaction = (id: string, transactionData: Partial<Transaction>): Promise<AxiosResponse> => {
+  return api.put(`/transactions/${id}`, transactionData);
 };
 
-export const deleteTransaction = (id: string): Promise<AxiosResponse<{message: string}>> => {
-  return api.delete<{message: string}>(`/transactions/${id}`);
+export const deleteTransaction = (id: string): Promise<AxiosResponse> => {
+  return api.delete(`/transactions/${id}`);
 };
 
 // Sync Types
@@ -480,12 +494,6 @@ export interface Budget {
   period: string;
 }
 
-// Budgets API
-export const getBudgets = (): Promise<AxiosResponse<{budgets: Budget[]}>> => {
-  return api.get('/budget');
-};
-
-// Add this new function
 export const updateCategory = async (
   originalName: string,
   updatedCategory: {
@@ -497,4 +505,382 @@ export const updateCategory = async (
   return api.put(`/transactions/categories/${originalName}`, updatedCategory);
 };
 
-export default api;
+// Allow API client to use device's network IP when running in Expo Go
+export const configureApiForDevice = async (ip?: string) => {
+  // If IP is provided (from device settings), use it
+  if (ip) {
+    api.defaults.baseURL = `http://${ip}:5000/api`;
+    await AsyncStorage.setItem('api_base_url', api.defaults.baseURL);
+    console.log('API base URL set to:', api.defaults.baseURL);
+    return;
+  }
+  
+  // Try to get saved IP from storage
+  const savedBaseUrl = await AsyncStorage.getItem('api_base_url');
+  if (savedBaseUrl) {
+    api.defaults.baseURL = savedBaseUrl;
+    console.log('Using saved API base URL:', api.defaults.baseURL);
+  }
+};
+
+export async function createNotification(notificationData: {
+  title: string;
+  message: string;
+  type: string;
+}) {
+  try {
+    const response = await api.post('/notifications', notificationData);
+    return response;
+  } catch (error) {
+    console.error('Error creating notification:', error);
+    throw error;
+  }
+}
+
+export async function sendEmailNotification(emailData: {
+  type: string;
+  data: any;
+}) {
+  try {
+    const response = await api.post('/notifications/email', emailData);
+    return response;
+  } catch (error) {
+    console.error('Error sending email notification:', error);
+    throw error;
+  }
+}
+
+interface LoansResponse {
+  loans: Loan[];
+}
+
+// Add this function to your exported API functions
+export const getLoans = (params?: { status?: string; loan_type?: string }): Promise<AxiosResponse<{ loans: Loan[] }>> => {
+  const searchParams = new URLSearchParams();
+  if (params?.status) searchParams.append('status', params.status);
+  if (params?.loan_type) searchParams.append('loan_type', params.loan_type);
+  
+  const queryString = searchParams.toString();
+  return api.get<{ loans: Loan[] }>(`/loans${queryString ? `?${queryString}` : ''}`);
+};
+
+export const createLoan = (loanData: Partial<Loan>): Promise<AxiosResponse> => {
+  return api.post('/loans', loanData);
+};
+
+export const updateLoan = (id: string, loanData: Partial<Loan>): Promise<AxiosResponse> => {
+  return api.put(`/loans/${id}`, loanData);
+};
+
+export const deleteLoan = (id: string): Promise<AxiosResponse> => {
+  return api.delete(`/loans/${id}`);
+};
+
+// Analytics functions
+export const getTransactionSummary = (params?: { start_date?: string; end_date?: string }): Promise<AxiosResponse> => {
+  const searchParams = new URLSearchParams();
+  if (params?.start_date) searchParams.append('start_date', params.start_date);
+  if (params?.end_date) searchParams.append('end_date', params.end_date);
+  
+  const queryString = searchParams.toString();
+  return api.get(`/transactions/analytics/summary${queryString ? `?${queryString}` : ''}`);
+};
+
+// Investment interfaces
+export interface Investment {
+  id: string;
+  name: string;
+  platform?: string;
+  investment_type?: string;
+  initial_amount: number;
+  current_value?: number;
+  expected_roi?: number;
+  actual_roi?: number;
+  currency: string;
+  purchase_date: string;
+  maturity_date?: string;
+  status: 'active' | 'matured' | 'sold' | 'partial_sold';
+  notes?: string;
+  days_held?: number;
+  latest_roi_entry?: ROIEntry;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ROIEntry {
+  id: string;
+  recorded_value: number;
+  roi_percentage: number;
+  entry_date: string;
+  note?: string;
+  created_at?: string;
+}
+
+export interface InvestmentAnalytics {
+  total_investments: number;
+  total_invested: number;
+  total_current_value: number;
+  total_roi_percentage: number;
+  total_gain_loss: number;
+  by_investment_type: Record<string, {
+    count: number;
+    total_invested: number;
+    total_current_value: number;
+    avg_roi: number;
+  }>;
+  best_performer?: {
+    name: string;
+    roi: number;
+  };
+  worst_performer?: {
+    name: string;
+    roi: number;
+  };
+}
+
+// Investment API functions
+export const getInvestments = (params?: { 
+  status?: string; 
+  investment_type?: string; 
+}): Promise<AxiosResponse<{ investments: Investment[] }>> => {
+  const searchParams = new URLSearchParams();
+  if (params?.status) searchParams.append('status', params.status);
+  if (params?.investment_type) searchParams.append('investment_type', params.investment_type);
+  
+  const queryString = searchParams.toString();
+  return api.get<{ investments: Investment[] }>(`/investments${queryString ? `?${queryString}` : ''}`);
+};
+
+export const createInvestment = (investmentData: Partial<Investment>): Promise<AxiosResponse> => {
+  return api.post('/investments', investmentData);
+};
+
+export const updateInvestment = (id: string, investmentData: Partial<Investment>): Promise<AxiosResponse> => {
+  return api.put(`/investments/${id}`, investmentData);
+};
+
+export const deleteInvestment = (id: string): Promise<AxiosResponse> => {
+  return api.delete(`/investments/${id}`);
+};
+
+// ROI tracking functions
+export const addROIEntry = (investmentId: string, roiData: {
+  recorded_value: number;
+  entry_date: string;
+  note?: string;
+}): Promise<AxiosResponse> => {
+  return api.post(`/investments/${investmentId}/roi`, roiData);
+};
+
+export const getROIHistory = (investmentId: string): Promise<AxiosResponse<{
+  roi_history: ROIEntry[];
+  investment_name: string;
+  total_entries: number;
+}>> => {
+  return api.get(`/investments/${investmentId}/roi`);
+};
+
+// Account interfaces
+export interface Account {
+  id: string;
+  name: string;
+  account_type: 'checking' | 'savings' | 'credit_card' | 'investment' | 'cash';
+  account_number?: string;
+  bank_name?: string;
+  balance: number;
+  currency: string;
+  is_primary: boolean;
+  is_active: boolean;
+  credit_limit?: number;
+  interest_rate?: number;
+  opening_date?: string;
+  notes?: string;
+  icon: string;
+  color: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// Budget interfaces
+export interface Budget {
+  id: string;
+  name: string;
+  category: string;
+  amount: number;
+  currency: string;
+  period: string;
+  start_date: string;
+  end_date?: string;
+  spent_amount: number;
+  remaining_amount: number;
+  alert_threshold: number;
+  is_active: boolean;
+  auto_rollover: boolean;
+  notes?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BudgetAlert {
+  id: string;
+  budget_id: string;
+  alert_type: 'threshold' | 'exceeded' | 'depleted';
+  percentage_used: number;
+  amount_spent: number;
+  triggered_at: string;
+  is_read: boolean;
+  message: string;
+}
+
+// Goal interfaces
+export interface Goal {
+  id: string;
+  name: string;
+  description?: string;
+  target_amount: number;
+  current_amount: number;
+  currency: string;
+  target_date?: string;
+  category?: string;
+  priority: 'low' | 'medium' | 'high';
+  status: 'active' | 'completed' | 'paused' | 'cancelled';
+  auto_contribute: boolean;
+  contribution_amount?: number;
+  contribution_frequency?: string;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string;
+}
+
+// Notification interfaces
+export interface Notification {
+  id: string;
+  title: string;
+  message: string;
+  type: string;
+  category?: string;
+  is_read: boolean;
+  is_email_sent: boolean;
+  is_push_sent: boolean;
+  data?: string;
+  expires_at?: string;
+  created_at: string;
+  read_at?: string;
+}
+
+// API Functions for Accounts
+export const getAccounts = (): Promise<AxiosResponse<{ accounts: Account[] }>> => {
+  return api.get('/accounts');
+};
+
+export const createAccount = (accountData: Partial<Account>): Promise<AxiosResponse> => {
+  return api.post('/accounts', accountData);
+};
+
+export const updateAccount = (id: string, accountData: Partial<Account>): Promise<AxiosResponse> => {
+  return api.put(`/accounts/${id}`, accountData);
+};
+
+export const deleteAccount = (id: string): Promise<AxiosResponse> => {
+  return api.delete(`/accounts/${id}`);
+};
+
+// API Functions for Budgets
+export const getBudgets = (): Promise<AxiosResponse<{ budgets: Budget[] }>> => {
+  return api.get('/budgets');
+};
+
+export const createBudget = (budgetData: Partial<Budget>): Promise<AxiosResponse> => {
+  return api.post('/budgets', budgetData);
+};
+
+export const updateBudget = (id: string, budgetData: Partial<Budget>): Promise<AxiosResponse> => {
+  return api.put(`/budgets/${id}`, budgetData);
+};
+
+export const deleteBudget = (id: string): Promise<AxiosResponse> => {
+  return api.delete(`/budgets/${id}`);
+};
+
+export const getBudgetAlerts = (): Promise<AxiosResponse<{ alerts: BudgetAlert[] }>> => {
+  return api.get('/budgets/alerts');
+};
+
+// API Functions for Goals
+export const getGoals = (): Promise<AxiosResponse<{ goals: Goal[] }>> => {
+  return api.get('/goals');
+};
+
+export const createGoal = (goalData: Partial<Goal>): Promise<AxiosResponse> => {
+  return api.post('/goals', goalData);
+};
+
+export const updateGoal = (id: string, goalData: Partial<Goal>): Promise<AxiosResponse> => {
+  return api.put(`/goals/${id}`, goalData);
+};
+
+export const deleteGoal = (id: string): Promise<AxiosResponse> => {
+  return api.delete(`/goals/${id}`);
+};
+
+export const contributeToGoal = (id: string, amount: number): Promise<AxiosResponse> => {
+  return api.post(`/goals/${id}/contribute`, { amount });
+};
+
+// API Functions for Notifications
+export const getNotifications = (): Promise<AxiosResponse<{ notifications: Notification[] }>> => {
+  return api.get('/notifications');
+};
+
+export const markNotificationAsRead = (id: string): Promise<AxiosResponse> => {
+  return api.put(`/notifications/${id}/read`);
+};
+
+export const deleteNotification = (id: string): Promise<AxiosResponse> => {
+  return api.delete(`/notifications/${id}`);
+};
+
+// API Functions for Currencies
+
+// Define the Currency interface
+export interface Currency {
+  code: string;
+  name: string;
+  symbol: string;
+  decimal_digits?: number;
+  rounding?: number;
+  symbol_native?: string;
+  name_plural?: string;
+}
+
+export const getCurrencies = (): Promise<AxiosResponse<{ currencies: Currency[] }>> => {
+  return api.get('/currencies');
+};
+
+export const getExchangeRate = (from: string, to: string): Promise<AxiosResponse<{ rate: number }>> => {
+  return api.get(`/currencies/exchange-rate?from=${from}&to=${to}`);
+};
+
+// Define CurrencyPreference interface
+export interface CurrencyPreference {
+  primary_currency: string;
+  secondary_currencies?: string[];
+  default_account_currency?: string;
+}
+
+export const updateCurrencyPreferences = (preferences: Partial<CurrencyPreference>): Promise<AxiosResponse> => {
+  return api.put('/currencies/preferences', preferences);
+};
+
+// Add this function to your existing api.ts file
+export const getUserCurrencyPreferences = (): Promise<AxiosResponse<{ preferences: CurrencyPreference[] }>> => {
+  return api.get('/currencies/preferences');
+};
+
+
+export function get(arg0: string) {
+    throw new Error('Function not implemented.');
+}
+
+export { api };
+
