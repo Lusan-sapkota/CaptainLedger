@@ -63,11 +63,32 @@ export default function HistoryScreen() {
     const netBalance = totalIncome - totalExpense;
     const transactionCount = transactions.length;
     
+    // Calculate investment and loan totals
+    const investmentsMade = transactions
+      .filter(t => t.transaction_type === 'investment')
+      .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+    
+    const loansGiven = transactions
+      .filter(t => t.transaction_type === 'loan')
+      .reduce((sum, t) => sum + t.amount, 0);
+    
+    const loanRepayments = transactions
+      .filter(t => t.transaction_type === 'loan_repayment')
+      .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+    
+    // Assets = investments made + loans given
+    const assets = investmentsMade + loansGiven;
+    
+    // Liabilities = loan repayments (money owed/paid back)
+    const liabilities = loanRepayments;
+    
     return {
       totalIncome,
       totalExpense,
       netBalance,
-      transactionCount
+      transactionCount,
+      assets,
+      liabilities
     };
   }, [transactions]);
   
@@ -556,6 +577,24 @@ export default function HistoryScreen() {
           </View>
           <View style={styles.statItem}>
             <View style={[styles.statIcon, { backgroundColor: AppColors.secondary + '22' }]}>
+              <FontAwesome name="line-chart" size={20} color={AppColors.secondary} />
+            </View>
+            <Text style={[styles.statLabel, { color: colors.subText }]}>Assets</Text>
+            <Text style={[styles.statValue, { color: AppColors.info }]}>
+              +{filterStats.assets.toFixed(2)}
+            </Text>
+          </View>
+          <View style={styles.statItem}>
+            <View style={[styles.statIcon, { backgroundColor: '#FF9800' + '22' }]}>
+              <FontAwesome name="credit-card" size={20} color="#FF9800" />
+            </View>
+            <Text style={[styles.statLabel, { color: colors.subText }]}>Liabilities</Text>
+            <Text style={[styles.statValue, { color: AppColors.warning }]}>
+              -{filterStats.liabilities.toFixed(2)}
+            </Text>
+          </View>
+          <View style={styles.statItem}>
+            <View style={[styles.statIcon, { backgroundColor: AppColors.secondary + '22' }]}>
               <FontAwesome name="balance-scale" size={20} color={AppColors.secondary} />
             </View>
             <Text style={[styles.statLabel, { color: colors.subText }]}>Net</Text>
@@ -906,7 +945,7 @@ const styles = StyleSheet.create({
   },
   statItem: {
     flex: 1,
-    minWidth: '45%',
+    minWidth: '30%',
     alignItems: 'center',
     paddingVertical: 10,
     backgroundColor: 'transparent',

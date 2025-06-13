@@ -169,17 +169,6 @@ export default function AccountsScreen() {
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <StatusBar style={isDarkMode ? 'light' : 'dark'} />
-      
-      {/* Header */}
-      <LinearGradient
-        colors={isDarkMode ? ['#2C3E50', '#34495E'] : [AppColors.primary, AppColors.darkGreen]}
-        style={styles.header}
-      >
-        <Text style={styles.headerTitle}>Accounts Section</Text>
-        <TouchableOpacity onPress={() => setShowModal(true)} style={styles.addButton}>
-          <FontAwesome name="plus" size={20} color="white" />
-        </TouchableOpacity>
-      </LinearGradient>
 
       <ScrollView 
         style={styles.content}
@@ -321,6 +310,14 @@ export default function AccountsScreen() {
         )}
       </ScrollView>
 
+      {/* Floating Action Button */}
+      <TouchableOpacity 
+        style={[styles.fab, { backgroundColor: AppColors.primary }]}
+        onPress={() => setShowModal(true)}
+      >
+        <FontAwesome name="plus" size={24} color="white" />
+      </TouchableOpacity>
+
       {/* Create Account Modal */}
       <Modal visible={showModal} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
@@ -449,8 +446,20 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: 'white',
   },
-  addButton: {
-    padding: 8,
+  fab: {
+    position: 'absolute',
+    right: 30,
+    bottom: 20,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
   },
   content: {
     flex: 1,

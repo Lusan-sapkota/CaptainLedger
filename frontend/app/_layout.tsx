@@ -7,16 +7,14 @@ import React, { useEffect, useState } from 'react';
 import 'react-native-reanimated';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert, Text, AppState } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { View, ActivityIndicator, Platform } from 'react-native';
 import { AppColors } from './(tabs)/_layout';
-import * as apiModule from '@/services/api';
+import { getUserProfile, configureApi } from '@/services/api';
 import sessionManager from '@/utils/sessionManager';
-
-const apiInstance = apiModule.api; 
-const configureApi = apiModule.configureApiForDevice;
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -611,9 +609,10 @@ function RootLayoutNav() {
         // Get any custom server IP the user might have set
         const customServerIp = await AsyncStorage.getItem('server_ip');
         
-        // Use the renamed function from the api module
+        // Use the configureApi function from the api module
         if (typeof configureApi === 'function') {
-          await configureApi(customServerIp || undefined);
+          const apiOptions = customServerIp ? { baseURL: `http://${customServerIp}:5000/api` } : {};
+          configureApi(apiOptions);
         } else {
           console.warn('configureApi function not available');
         }
@@ -637,105 +636,28 @@ function RootLayoutNav() {
   }
 
   return (
-    <ThemeProvider>
-      <NavigationThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-        <Stack>
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
-          <Stack.Screen name="notifications" options={{ title: "Notifications" }} />
-          <Stack.Screen name="settings" options={{ title: "Settings" }} />
-          <Stack.Screen name="onboarding" options={{ headerShown: false, gestureEnabled: false }} />
-          <Stack.Screen name="auth" options={{ headerShown: false, gestureEnabled: false }} />
-          <Stack.Screen name="terms" options={{ title: "Terms & Conditions" }} />
-          <Stack.Screen name="privacy" options={{ title: "Privacy Policy" }} />
-          <Stack.Screen name="documentation" options={{ title: "Documentation" }} />
-          <Stack.Screen name="forgotPassword" options={{ headerShown: false }} />
-          <Stack.Screen name="verifyOtp" options={{ headerShown: false, gestureEnabled: false }} />
-          <Stack.Screen name="profileSetup" options={{ headerShown: false, gestureEnabled: false }} />
-          <Stack.Screen name="editProfile" options={{ headerShown: false }} />
-          <Stack.Screen name="changePassword" options={{ headerShown: false }} />
-        </Stack>
-      </NavigationThemeProvider>
-    </ThemeProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <ThemeProvider>
+        <NavigationThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+          <Stack>
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
+            <Stack.Screen name="notifications" options={{ title: "Notifications" }} />
+            <Stack.Screen name="settings" options={{ title: "Settings" }} />
+            <Stack.Screen name="onboarding" options={{ headerShown: false, gestureEnabled: false }} />
+            <Stack.Screen name="auth" options={{ headerShown: false, gestureEnabled: false }} />
+            <Stack.Screen name="terms" options={{ title: "Terms & Conditions" }} />
+            <Stack.Screen name="privacy" options={{ title: "Privacy Policy" }} />
+            <Stack.Screen name="documentation" options={{ title: "Documentation" }} />
+            <Stack.Screen name="forgotPassword" options={{ headerShown: false }} />
+            <Stack.Screen name="verifyOtp" options={{ headerShown: false, gestureEnabled: false }} />
+            <Stack.Screen name="profileSetup" options={{ headerShown: false, gestureEnabled: false }} />
+            <Stack.Screen name="editProfile" options={{ headerShown: false }} />
+            <Stack.Screen name="changePassword" options={{ headerShown: false }} />
+          </Stack>
+        </NavigationThemeProvider>
+      </ThemeProvider>
+    </GestureHandlerRootView>
   );
-}
-// Simulate fetching user profile from an API using the stored auth_token
-async function getUserProfile() {
-  try {
-    const token = await AsyncStorage.getItem('auth_token');
-    if (!token) {
-      return { status: 401, data: null };
-    }
-
-    // Use the renamed axios instance
-    const response = await apiInstance.get('/auth/profile', {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
-      withCredentials: true
-    });
-
-    return { 
-      status: response.status, 
-      data: response.data
-    };
-  } catch (error) {
-    console.error('Failed to fetch user profile:', error);
-    
-    // Special handling - if error is 500 (server error), don't treat as auth failure
-    if (error && typeof error === 'object' && 'response' in error &&
-        typeof (error as any).response === 'object' && (error as any).response?.status === 500) {
-      console.log('Server error (500) - not treating as auth failure');
-      // Return a special status code to keep the user logged in
-      return { status: 0, data: null };
-    }
-    
-    // Rest of your error handling
-    if (error && typeof error === 'object' && 'response' in error) {
-      return { 
-        status: (error as any).response?.status || 500, 
-        data: null 
-      };
-    } else if (error && typeof error === 'object' && 'request' in error) {
-      console.log('No response received - network issue');
-      return { status: 0, data: null };
-    } else {
-      return { status: 500, data: null };
-    }
-  }
-}
-function configureApiForDevice(customServerIp?: string) {
-  // Default API base URL depending on platform
-  let baseURL: string;
-
-  if (customServerIp) {
-    // Use the custom server IP provided by the user
-    baseURL = `http://${customServerIp}:5000/api`; // Add correct port and path
-  } else if (Platform.OS === 'android') {
-    // Android emulator uses 10.0.2.2 to access host machine
-    baseURL = 'http://10.0.2.2:5000/api';
-  } else if (Platform.OS === 'ios') {
-    // iOS simulator - localhost works
-    baseURL = 'http://localhost:5000/api';
-  } else if (Platform.OS === 'web') {
-    // Web version - use localhost
-    baseURL = 'http://localhost:5000/api';
-  } else {
-    // Physical device - this should be your computer's local IP
-    baseURL = 'http://192.168.18.2:5000/api'; // Use your actual IP address
-  }
-
-  console.log(`Setting API baseURL to: ${baseURL}`);
-  
-  // Set the baseURL for the API client using the renamed instance
-  apiInstance.defaults.baseURL = baseURL;
-  
-  // Also configure withCredentials for CORS
-  apiInstance.defaults.withCredentials = true;
-  apiInstance.defaults.headers.common['Content-Type'] = 'application/json';
-  
-  // Store the configured URL for reference
-  AsyncStorage.setItem('api_base_url', baseURL);
 }
 

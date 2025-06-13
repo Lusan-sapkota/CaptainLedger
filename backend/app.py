@@ -11,6 +11,7 @@ from api.budget import budget_bp
 from api.sync import sync_bp
 from api.currencies import currencies_bp
 from api.notifications import notifications_bp  # Import notifications blueprint
+from api.data_management import data_management_bp  # Import data management blueprint
 from datetime import timedelta
 from pathlib import Path
 from tasks.scheduler import report_scheduler
@@ -68,6 +69,7 @@ def create_app():
     app.register_blueprint(sync_bp, url_prefix='/api/sync')
     app.register_blueprint(currencies_bp, url_prefix='/api/currencies')
     app.register_blueprint(notifications_bp, url_prefix='/api/notifications')  # Register notifications blueprint
+    app.register_blueprint(data_management_bp, url_prefix='/api/data')  # Register data management blueprint
     
     # Initialize WebSocket
     init_socketio(app)

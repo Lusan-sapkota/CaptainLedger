@@ -102,7 +102,7 @@ export default function CategoryManagementScreen() {
       };
       
       // Call the API to save the category
-      await addCategory(newCategory.name, newCategory.color, newCategory.type);
+      await addCategory(newCategory);
       
       // Add to local state
       setCategories([...categories, newCategory]);

@@ -596,7 +596,7 @@ export default function ProfileScreen() {
           
           <TouchableOpacity 
             style={[styles.actionButton, { backgroundColor: 'transparent' }]}
-            onPress={() => Alert.alert('About', 'CaptainLedger v1.0.0\n\nA privacy-focused finance tracker.')}
+            onPress={() => router.push('/about')}
           >
             <FontAwesome name="info-circle" size={18} color={AppColors.secondary} style={styles.actionIcon} />
             <Text style={[styles.actionText, { color: colors.text, flex: 1 }]}>About</Text>

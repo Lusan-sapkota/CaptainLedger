@@ -18,6 +18,7 @@ export const AppColors = {
   lightText: '#7F8C8D',  // For secondary text
   danger: '#E74C3C',     // For errors, negative amounts
   warning: '#F39C12',   // For warnings, alerts
+  info: '#17a2b8'
 };
 
 // You can explore the built-in icon families and icons on the web at https://icons.expo.fyi/
@@ -190,7 +191,7 @@ export default function TabLayout() {
           }}
         />
         <Tabs.Screen
-          name="two"
+          name="transactions"
           options={{
             title: 'Transactions',
             tabBarIcon: ({ color }) => <TabBarIcon name="money" color={color} />,

@@ -1,14 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, ScrollView, TouchableOpacity, Switch, Alert, Platform, View as RNView, ActivityIndicator } from 'react-native';
+import { StyleSheet, ScrollView, TouchableOpacity, Switch, Alert, Platform, View as RNView, ActivityIndicator, Modal } from 'react-native';
 import { Stack } from 'expo-router';
 import { Text, View } from '@/components/Themed';
 import { AppColors } from './(tabs)/_layout';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useTheme } from '@/components/ThemeProvider';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { removeTrustedDevice } from '@/services/api';
+import { removeTrustedDevice, exportDatabase, importDatabase, importDatabaseFromUri, getImportOptions } from '@/services/api';
 import { getDeviceIdentifier } from '@/utils/device';
 import sessionManager from '@/utils/sessionManager';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
+import { useAlert } from '@/components/AlertProvider';
+import BiometricAuthManager from '@/utils/biometricAuth';
+import BiometricSettingsModal from '@/components/BiometricSettingsModal';
 
 const LoginHistoryList = ({ colors }: { colors: any }) => {
   const [loginHistory, setLoginHistory] = useState<any[]>([]);
@@ -313,6 +319,112 @@ const TrustedDevicesSection = ({ colors }: { colors: any }) => {
   );
 };
 
+// Add this component to show import options modal
+const ImportOptionsModal = ({ visible, onClose, onImport }: {
+  visible: boolean;
+  onClose: () => void;
+  onImport: (mergeStrategy: string) => void;
+}) => {
+  const { colors } = useTheme();
+  const [loading, setLoading] = useState(true);
+  const [mergeStrategies, setMergeStrategies] = useState<Array<{
+    id: string;
+    name: string;
+    description: string;
+  }>>([]);
+  const [selectedStrategy, setSelectedStrategy] = useState<string>('newest_wins');
+  
+  useEffect(() => {
+    if (visible) {
+      loadImportOptions();
+    }
+  }, [visible]);
+  
+  const loadImportOptions = async () => {
+    try {
+      setLoading(true);
+      const response = await getImportOptions();
+      setMergeStrategies(response.data.merge_strategies);
+      setSelectedStrategy(response.data.merge_strategies[0]?.id || 'newest_wins');
+    } catch (error) {
+      console.error('Error loading import options:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  return (
+    <Modal
+      visible={visible}
+      transparent={true}
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <RNView style={[styles.modalOverlay, { backgroundColor: 'rgba(0,0,0,0.5)' }]}>
+        <RNView style={[styles.modalContent, { backgroundColor: colors.cardBackground }]}>
+          <Text style={[styles.modalTitle, { color: colors.text }]}>Import Options</Text>
+          
+          <Text style={[styles.modalSubtitle, { color: colors.text }]}>
+            Select how to handle conflicting data:
+          </Text>
+          
+          {loading ? (
+            <ActivityIndicator size="small" color={AppColors.primary} />
+          ) : (
+            <RNView style={styles.strategyContainer}>
+              {mergeStrategies.map((strategy) => (
+                <TouchableOpacity
+                  key={strategy.id}
+                  style={[
+                    styles.strategyOption,
+                    selectedStrategy === strategy.id && styles.selectedStrategy,
+                    { 
+                      backgroundColor: selectedStrategy === strategy.id 
+                        ? AppColors.primary 
+                        : colors.cardBackground,
+                      borderColor: colors.border 
+                    }
+                  ]}
+                  onPress={() => setSelectedStrategy(strategy.id)}
+                >
+                  <Text style={[styles.strategyName, { 
+                    color: selectedStrategy === strategy.id ? AppColors.primary : colors.text,
+                    fontWeight: selectedStrategy === strategy.id ? 'bold' : 'normal'
+                  }]}>
+                    {strategy.name}
+                  </Text>
+                  <Text style={[styles.strategyDescription, { 
+                    color: selectedStrategy === strategy.id ? AppColors.primary : colors.subText 
+                  }]}>
+                    {strategy.description}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </RNView>
+          )}
+          
+          <RNView style={styles.modalButtonContainer}>
+            <TouchableOpacity
+              style={[styles.modalButton, styles.cancelButton, { borderColor: colors.border }]}
+              onPress={onClose}
+            >
+              <Text style={[styles.modalButtonText, { color: colors.text }]}>Cancel</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={[styles.modalButton, styles.importButton, { backgroundColor: AppColors.primary }]}
+              onPress={() => onImport(selectedStrategy)}
+              disabled={loading}
+            >
+              <Text style={[styles.modalButtonText, { color: 'white' }]}>Import</Text>
+            </TouchableOpacity>
+          </RNView>
+        </RNView>
+      </RNView>
+    </Modal>
+  );
+};
+
 export default function SettingsScreen() {
   const { isDarkMode, colors, toggleTheme } = useTheme();
   
@@ -320,9 +432,46 @@ export default function SettingsScreen() {
   const [autoSync, setAutoSync] = useState(true);
   const [notifications, setNotifications] = useState(true);
   const [biometricLogin, setBiometricLogin] = useState(false);
+  const [appLock, setAppLock] = useState(false);
   const [exportEnabled, setExportEnabled] = useState(true);
   const [currencyCode, setCurrencyCode] = useState('USD');
   const [language, setLanguage] = useState('English');
+  
+  // Biometric settings modal
+  const [biometricModalVisible, setBiometricModalVisible] = useState(false);
+  const [currentUserData, setCurrentUserData] = useState<{ email: string; userId: string } | null>(null);
+  
+  // Add these state variables with the existing ones
+  const [importOptionsVisible, setImportOptionsVisible] = useState(false);
+  const [importFile, setImportFile] = useState<any>(null);
+  const [importLoading, setImportLoading] = useState(false);
+  const [exportLoading, setExportLoading] = useState(false);
+  
+  // Get access to the alert component
+  const { showAlert } = useAlert();
+
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  const loadSettings = async () => {
+    try {
+      // Load current user data
+      const email = await AsyncStorage.getItem('user_email');
+      const userId = await AsyncStorage.getItem('user_id');
+      
+      if (email && userId) {
+        setCurrentUserData({ email, userId });
+      }
+
+      // Load biometric and app lock settings
+      const config = await BiometricAuthManager.getBiometricConfig();
+      setBiometricLogin(config.biometricEnabled);
+      setAppLock(config.appLockEnabled);
+    } catch (error) {
+      console.error('Error loading settings:', error);
+    }
+  };
   
   const handleThemeChange = (value: boolean) => {
     toggleTheme(value);
@@ -384,6 +533,95 @@ export default function SettingsScreen() {
     );
   };
   
+  // File picker for import
+  const pickImportFile = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: 'application/octet-stream', // This should match SQLite .db files
+        copyToCacheDirectory: true
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const file = result.assets[0];
+        // Check if it's a .db file
+        if (!file.name.endsWith('.db')) {
+          showAlert('Invalid File', 'Please select a valid database (.db) file', 'error');
+          return;
+        }
+
+        setImportFile(file);
+        setImportOptionsVisible(true);
+      }
+    } catch (error) {
+      console.error('Error picking file:', error);
+      showAlert('Error', 'Failed to open file picker', 'error');
+    }
+  };
+  
+  // Handle database import
+  const handleImport = async (mergeStrategy: string) => {
+    if (!importFile) {
+      showAlert('Error', 'No file selected for import', 'error');
+      return;
+    }
+    
+    try {
+      setImportLoading(true);
+      setImportOptionsVisible(false);
+      
+      let importResult;
+      
+      // Different approach for web vs mobile
+      if (Platform.OS === 'web') {
+        // For web - create a blob from the file
+        const response = await fetch(importFile.uri);
+        const fileBlob = await response.blob();
+        const result = await importDatabase(fileBlob, mergeStrategy);
+        importResult = result.data;
+      } else {
+        // For mobile
+        importResult = await importDatabaseFromUri(importFile.uri, mergeStrategy);
+      }
+      
+      showAlert('Import Successful', 
+        `Successfully imported ${importResult.total_records} records:\n` +
+        `- ${importResult.records_imported.transactions} transactions\n` +
+        `- ${importResult.records_imported.categories} categories\n` +
+        `- ${importResult.records_imported.budgets} budgets\n` +
+        `- ${importResult.records_imported.loans} loans`,
+        'success'
+      );
+      
+      // Clear the import file
+      setImportFile(null);
+    } catch (error) {
+      console.error('Import error:', error);
+      showAlert('Import Failed', 
+        'There was a problem importing your data. Please try again or contact support.',
+        'error'
+      );
+    } finally {
+      setImportLoading(false);
+    }
+  };
+  
+  // Handle database export
+  const handleExport = async () => {
+    try {
+      setExportLoading(true);
+      await exportDatabase();
+      showAlert('Export Successful', 'Your data has been exported successfully', 'success');
+    } catch (error) {
+      console.error('Export error:', error);
+      showAlert('Export Failed', 
+        'There was a problem exporting your data. Please try again or contact support.',
+        'error'
+      );
+    } finally {
+      setExportLoading(false);
+    }
+  };
+  
   return (
     <ScrollView style={[styles.container, { backgroundColor: colors.background }]}>
       <Stack.Screen options={{ title: 'Settings', headerShown: true }} />
@@ -422,7 +660,21 @@ export default function SettingsScreen() {
         )}
         
         {renderSettingOption(
-          "Export Data",
+          "Export Database",
+          "Download complete backup of your data",
+          exportLoading ? "..." : "DB",
+          handleExport
+        )}
+        
+        {renderSettingOption(
+          "Import Database",
+          "Restore data from a database backup",
+          importLoading ? "..." : "DB",
+          pickImportFile
+        )}
+        
+        {renderSettingOption(
+          "Export Transactions",
           "Export your transactions as CSV",
           "CSV",
           () => Alert.alert("Export Data", "This feature will be available soon")
@@ -555,6 +807,13 @@ export default function SettingsScreen() {
       <Text style={[styles.versionText, { color: colors.subText }]}>
         Version 1.0.0
       </Text>
+      
+      {/* Import options modal */}
+      <ImportOptionsModal
+        visible={importOptionsVisible}
+        onClose={() => setImportOptionsVisible(false)}
+        onImport={handleImport}
+      />
     </ScrollView>
   );
 }
@@ -716,5 +975,76 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontStyle: 'italic',
     paddingVertical: 16,
+  },
+  
+  // Add these new styles
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalContent: {
+    width: '90%',
+    maxWidth: 500,
+    borderRadius: 12,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  modalSubtitle: {
+    fontSize: 16,
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  strategyContainer: {
+    marginBottom: 20,
+  },
+  strategyOption: {
+    padding: 16,
+    borderWidth: 1,
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  selectedStrategy: {
+    borderWidth: 2,
+  },
+  strategyName: {
+    fontSize: 16,
+    marginBottom: 4,
+  },
+  strategyDescription: {
+    fontSize: 14,
+  },
+  modalButtonContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 20,
+  },
+  modalButton: {
+    padding: 12,
+    borderRadius: 8,
+    minWidth: 120,
+    alignItems: 'center',
+  },
+  cancelButton: {
+    borderWidth: 1,
+    backgroundColor: 'transparent',
+  },
+  importButton: {
+    borderWidth: 0,
+  },
+  modalButtonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 });

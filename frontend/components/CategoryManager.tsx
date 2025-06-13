@@ -14,7 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 
 // Import services
-import { getCategories, addCategory, deleteCategory } from '@/services/api';
+import { getCategoriesApi, addCategory, deleteCategory } from '@/services/api';
 import { useAlert } from '@/components/AlertProvider';
 import { useTheme } from '@/components/ThemeProvider';
 import { AppColors } from '@/app/(tabs)/_layout';
@@ -51,7 +51,7 @@ export default function CategoryManager() {
   const loadCategories = async () => {
     setLoading(true);
     try {
-      const response = await getCategories();
+      const response = await getCategoriesApi();
       if (response?.data?.categories) {
         setCategories(response.data.categories.map((cat: any) => ({
           id: cat.id,
@@ -76,7 +76,10 @@ export default function CategoryManager() {
     
     setLoading(true);
     try {
-      await addCategory(newCategoryName.trim(), selectedCategoryColor);
+      await addCategory({
+        name: newCategoryName.trim(),
+        color: selectedCategoryColor
+      });
       showAlert('Success', 'Category added successfully', 'success');
       await loadCategories();
       resetForm();

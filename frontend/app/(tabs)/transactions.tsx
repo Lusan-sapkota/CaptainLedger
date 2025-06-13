@@ -917,6 +917,25 @@ export default function TransactionsScreen() {
                 </Text>
               </View>
             </View>
+            
+            {/* Assets and Liabilities Row */}
+            <View style={[styles.summaryRow, { backgroundColor: 'transparent', marginTop: 10 }]}>
+              <View style={[styles.summaryItem, { backgroundColor: 'transparent' }]}>
+                <Text style={[styles.summaryLabel, { backgroundColor: 'transparent' }]}>Assets</Text>
+                <Text style={[styles.summaryValue, { color: AppColors.info, backgroundColor: 'transparent' }]}>
+                  +{monthlySummary.currency} {(monthlySummary.loansReceived + monthlySummary.investmentsMade).toFixed(2)}
+                </Text>
+              </View>
+              
+              <View style={[styles.summaryDivider, { backgroundColor: 'rgba(255,255,255,0.2)' }]} />
+              
+              <View style={[styles.summaryItem, { backgroundColor: 'transparent' }]}>
+                <Text style={[styles.summaryLabel, { backgroundColor: 'transparent' }]}>Liabilities</Text>
+                <Text style={[styles.summaryValue, { color: AppColors.warning, backgroundColor: 'transparent' }]}>
+                  -{monthlySummary.currency} {monthlySummary.loanRepayments.toFixed(2)}
+                </Text>
+              </View>
+            </View>
           </Animated.View>
         )}
       </View>

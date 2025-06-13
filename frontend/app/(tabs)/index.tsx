@@ -2,7 +2,7 @@ import { StyleSheet, TouchableOpacity, Image, ScrollView, Platform, View as RNVi
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { Href, useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getLoans, getTransactions, createNotification, sendEmailNotification } from '@/services/api';
+import { getLoans, getTransactions, createNotification, sendEmailNotification, getInvestments } from '@/services/api';
 import { Text, View } from '@/components/Themed';
 import { AppColors } from './_layout';
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -10,6 +10,7 @@ import { getUserProfile } from '@/services/api';
 import { useTheme } from '@/components/ThemeProvider';
 import { useFocusEffect } from '@react-navigation/native'; // Add this import
 import { eventEmitter } from '@/utils/eventEmitter';
+import SwipeableBudgetCard from '@/components/SwipeableBudgetCard';
 
 const FEATURE_ITEMS = [
   { 
@@ -46,6 +47,17 @@ const FEATURE_ITEMS = [
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
+
+// Define the Transaction type based on your transaction object structure
+type Transaction = {
+  id?: string | number;
+  amount: number;
+  date: string;
+  currency?: string;
+  category?: string;
+  note?: string;
+  // Add other fields as needed
+};
 
 export default function DashboardScreen() {
   const router = useRouter();
@@ -200,13 +212,17 @@ export default function DashboardScreen() {
   // Add these states in DashboardScreen
   const [loans, setLoans] = useState<any[]>([]);
   const [activeLoans, setActiveLoans] = useState<any[]>([]);
+  const [investments, setInvestments] = useState<any[]>([]);
+  const [activeInvestments, setActiveInvestments] = useState<any[]>([]);
   const [transactions, setTransactions] = useState<any[]>([]);
   const [dailyBudget, setDailyBudget] = useState<number>(0);
   const [totalBalance, setTotalBalance] = useState<number>(0);
   const [monthlyStats, setMonthlyStats] = useState({
     income: 0,
     expenses: 0,
-    balance: 0
+    balance: 0,
+    assets: 0,
+    liabilities: 0
   });
 
   // Add this function to fetch real-time data
@@ -221,9 +237,9 @@ export default function DashboardScreen() {
       
       // Fetch transactions with latest data
       const transactionResponse = await getTransactions();
-      if (transactionResponse?.data?.transactions) {
-        const allTransactions = transactionResponse.data.transactions;
-        
+      const allTransactions = transactionResponse?.data?.transactions || [];
+      
+      if (allTransactions.length > 0) {
         // Get most recent 5 transactions for display
         const recentTransactions = [...allTransactions]
           .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
@@ -231,34 +247,47 @@ export default function DashboardScreen() {
         
         setTransactions(recentTransactions);
         
-        // Calculate monthly stats with all transactions
-        calculateMonthlyStats(allTransactions);
-        
         // Calculate total balance
-        const balance = allTransactions.reduce((sum, t) => sum + t.amount, 0);
+        const balance = allTransactions.reduce((sum: number, t: Transaction) => sum + t.amount, 0);
         setTotalBalance(balance);
       }
       
       // Fetch loans
       const loanResponse = await getLoans();
-      if (loanResponse?.data?.loans) {
-        setLoans(loanResponse.data.loans);
+      const allLoans = loanResponse?.data?.loans || [];
+      
+      if (allLoans.length > 0) {
+        setLoans(allLoans);
         
         // Filter active loans (not paid)
-        const active = loanResponse.data.loans.filter(
+        const active = allLoans.filter(
           (loan: any) => loan.status === 'outstanding'
         );
         setActiveLoans(active);
         
         // Update balance to include loans
-        updateTotalBalance(transactionResponse?.data?.transactions || [], active);
+        updateTotalBalance(allTransactions, active);
+      }
+
+      // Fetch investments
+      const investmentResponse = await getInvestments();
+      const allInvestments = investmentResponse?.data?.investments || [];
+      
+      if (allInvestments.length > 0) {
+        setInvestments(allInvestments);
+        
+        // Filter active investments
+        const activeInvs = allInvestments.filter(
+          (inv: any) => inv.status === 'active'
+        );
+        setActiveInvestments(activeInvs);
       }
       
+      // Calculate monthly stats with all data
+      calculateMonthlyStats(allTransactions, allLoans, allInvestments);
+      
       // Calculate daily budget
-      calculateDailyBudget(
-        transactionResponse?.data?.transactions || [], 
-        loanResponse?.data?.loans || []
-      );
+      calculateDailyBudget(allTransactions, allLoans);
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
     } finally {
@@ -301,7 +330,7 @@ export default function DashboardScreen() {
   );
 
   // Calculate monthly statistics
-  const calculateMonthlyStats = useCallback((transactions: any[]) => {
+  const calculateMonthlyStats = useCallback((transactions: any[], allLoans: any[] = [], allInvestments: any[] = []) => {
     const currentMonth = new Date().getMonth();
     const currentYear = new Date().getFullYear();
     
@@ -320,11 +349,33 @@ export default function DashboardScreen() {
         expenses += Math.abs(t.amount);
       }
     });
+
+    // Calculate Assets (given loans + active investments)
+    const givenLoans = allLoans
+      .filter(loan => loan.loan_type === 'given' && loan.status === 'outstanding')
+      .reduce((sum, loan) => sum + loan.amount, 0);
+    
+    const totalInvestments = allInvestments
+      .filter(inv => inv.status === 'active')
+      .reduce((sum, inv) => sum + (inv.current_value || inv.initial_amount), 0);
+    
+    const assets = givenLoans + totalInvestments;
+
+    // Calculate Liabilities (taken loans + credit cards)
+    const takenLoans = allLoans
+      .filter(loan => loan.loan_type === 'taken' && loan.status === 'outstanding')
+      .reduce((sum, loan) => sum + loan.amount, 0);
+    
+    // For now, we'll calculate liabilities as taken loans
+    // In the future, this could include credit card debts from accounts
+    const liabilities = takenLoans;
     
     setMonthlyStats({
       income,
       expenses,
-      balance: income - expenses
+      balance: income - expenses,
+      assets,
+      liabilities
     });
   }, []);
 
@@ -484,21 +535,20 @@ export default function DashboardScreen() {
         const notificationData = {
           title: 'Loan Payment Reminder',
           message: `Your loan payment of ${loan.currency} ${loan.amount} is due in ${getDaysRemaining(loan.deadline)} days`,
-          type: 'reminder'
+          type: 'warning' as 'warning' // Use one of: 'error' | 'info' | 'warning' | 'success'
         };
         
         // Send to notifications API
-        await createNotification(notificationData);
+        await createNotification({
+          ...notificationData,
+          type: 'warning'
+        });
         
         // Send email notification
         await sendEmailNotification({
-          type: 'loan_reminder',
-          data: {
-            amount: loan.amount,
-            currency: loan.currency,
-            deadline: loan.deadline,
-            contact: loan.contact
-          }
+          to: userProfile?.email || 'user@example.com',
+          subject: 'Loan Payment Reminder',
+          message: `Your loan payment of ${loan.currency} ${loan.amount} is due in ${getDaysRemaining(loan.deadline)} days. Contact: ${loan.contact || 'N/A'}`
         });
       }
       
@@ -512,7 +562,7 @@ export default function DashboardScreen() {
         const notificationData = {
           title: 'Budget Alert',
           message: `You've already spent ${Math.round((monthlyStats.expenses / monthlyStats.income) * 100)}% of your monthly income and we're only halfway through the month!`,
-          type: 'alert'
+          type: 'warning' as 'warning' // Use one of: 'error' | 'info' | 'warning' | 'success'
         };
         
         // Send to notifications API
@@ -520,53 +570,41 @@ export default function DashboardScreen() {
         
         // Send email notification
         await sendEmailNotification({
-          type: 'budget_alert',
-          data: {
-            spentPercentage: Math.round((monthlyStats.expenses / monthlyStats.income) * 100),
-            monthProgress: Math.round((dayOfMonth / daysInMonth) * 100),
-            income: monthlyStats.income,
-            expenses: monthlyStats.expenses
-          }
+          to: userProfile?.email || 'user@example.com',
+          subject: 'Budget Alert',
+          message: `You've already spent ${Math.round((monthlyStats.expenses / monthlyStats.income) * 100)}% of your monthly income and we're only halfway through the month!`
         });
       }
       
       // Weekly reports on Sunday
       if (today.getDay() === 0) { // Sunday
+        const weekTransactions = transactions.filter(t => {
+          const txDate = new Date(t.date);
+          const weekAgo = new Date();
+          weekAgo.setDate(weekAgo.getDate() - 7);
+          return txDate >= weekAgo;
+        });
         await sendEmailNotification({
-          type: 'weekly_report',
-          data: {
-            transactions: transactions.filter(t => {
-              const txDate = new Date(t.date);
-              const weekAgo = new Date();
-              weekAgo.setDate(weekAgo.getDate() - 7);
-              return txDate >= weekAgo;
-            }),
-            stats: {
-              income: monthlyStats.income,
-              expenses: monthlyStats.expenses
-            }
-          }
+          to: userProfile?.email || '',
+          subject: 'Weekly Report',
+          message: `Here is your weekly report:\n\nIncome: $${monthlyStats.income.toFixed(2)}\nExpenses: $${monthlyStats.expenses.toFixed(2)}\nTransactions: ${weekTransactions.length}`
         });
       }
       
       // Monthly report on last day of month
       if (dayOfMonth === daysInMonth) {
+        const monthName = today.toLocaleString('default', { month: 'long' });
+        const year = today.getFullYear();
+        const monthlyTransactions = transactions.filter(t => {
+          const txDate = new Date(t.date);
+          return txDate.getMonth() === today.getMonth() && 
+                 txDate.getFullYear() === today.getFullYear();
+        });
+        const reportMessage = `Here is your monthly report for ${monthName} ${year}:\n\nIncome: $${monthlyStats.income.toFixed(2)}\nExpenses: $${monthlyStats.expenses.toFixed(2)}\nBalance: $${monthlyStats.balance.toFixed(2)}\nTransactions: ${monthlyTransactions.length}`;
         await sendEmailNotification({
-          type: 'monthly_report',
-          data: {
-            month: today.toLocaleString('default', { month: 'long' }),
-            year: today.getFullYear(),
-            transactions: transactions.filter(t => {
-              const txDate = new Date(t.date);
-              return txDate.getMonth() === today.getMonth() && 
-                     txDate.getFullYear() === today.getFullYear();
-            }),
-            stats: {
-              income: monthlyStats.income,
-              expenses: monthlyStats.expenses,
-              balance: monthlyStats.balance
-            }
-          }
+          to: userProfile?.email || '',
+          subject: `Monthly Report - ${monthName} ${year}`,
+          message: reportMessage
         });
       }
     } catch (error) {
@@ -602,6 +640,11 @@ export default function DashboardScreen() {
       setRefreshing(false);
     }
   }, [fetchDashboardData]);
+
+  // Add budget creation handler
+  const handleCreateBudget = useCallback((period: 'daily' | 'weekly' | 'monthly' | 'yearly') => {
+    router.push(`/budgets?period=${period}&create=true`);
+  }, [router]);
 
   // Listen for transaction updates
   useEffect(() => {
@@ -736,12 +779,29 @@ export default function DashboardScreen() {
             <Text style={styles.summaryValueNegative}>${monthlyStats.expenses.toFixed(2)}</Text>
           </View>
         </View>
+
+        {/* Assets and Liabilities Row */}
+        <View style={[styles.summaryRow, { backgroundColor: colors.cardBackground, marginTop: 10 }]}>
+          <View style={[styles.summaryItem, { backgroundColor: colors.cardBackground }]}>
+            <Text style={[styles.summaryLabel, { color: colors.subText }]}>Assets</Text>
+            <Text style={[styles.summaryValueAssets, { color: AppColors.info }]}>
+              ${monthlyStats.assets.toFixed(2)}
+            </Text>
+          </View>
+          <View style={[styles.summaryDivider, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }]} />
+          <View style={[styles.summaryItem, { backgroundColor: colors.cardBackground }]}>
+            <Text style={[styles.summaryLabel, { color: colors.subText }]}>Liabilities</Text>
+            <Text style={[styles.summaryValueLiabilities, { color: AppColors.warning }]}>
+              ${monthlyStats.liabilities.toFixed(2)}
+            </Text>
+          </View>
+        </View>
         
         <View style={[styles.balanceContainer, { 
           backgroundColor: colors.cardBackground, 
           borderTopColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' 
         }]}>
-          <Text style={[styles.balanceLabel, { color: colors.text }]}>Balance</Text>
+          <Text style={[styles.balanceLabel, { color: colors.text }]}>Net Balance</Text>
           <Text style={[styles.balanceValue, { 
             color: monthlyStats.balance >= 0 ? AppColors.primary : AppColors.danger 
           }]}>
@@ -750,37 +810,12 @@ export default function DashboardScreen() {
         </View>
       </View>
       
-      {/* Daily Budget Card - Updated with proper background colors and red for low budget */}
-      <View style={[styles.budgetCard, { backgroundColor: colors.cardBackground }]}>
-        <View style={[styles.budgetHeader, { backgroundColor: 'transparent' }]}>
-          <Text style={[styles.budgetTitle, { color: colors.text }]}>Daily Budget</Text>
-          <FontAwesome name="calendar-check-o" size={18} color={AppColors.primary} />
-        </View>
-        
-        <View style={[styles.budgetAmountContainer, { backgroundColor: 'transparent' }]}>
-          <Text style={[
-            styles.budgetAmount, 
-            { color: dailyBudget <= 5 ? AppColors.danger : AppColors.primary }
-          ]}>
-            ${dailyBudget.toFixed(2)}
-          </Text>
-          <Text style={[styles.budgetLabel, { color: colors.subText, backgroundColor: 'transparent' }]}>
-            available to spend today
-          </Text>
-        </View>
-        
-        <View style={[styles.budgetProgressBar, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]}>
-          <View style={[
-            styles.budgetProgressFill, 
-            { 
-              width: `${Math.min(100, Math.max(3, (dailyBudget / 100) * 100))}%`,
-              backgroundColor: dailyBudget <= 5 ? AppColors.danger : 
-                              dailyBudget <= 20 ? '#FF9800' : 
-                              AppColors.primary 
-            }
-          ]} />
-        </View>
-      </View>
+      {/* Swipeable Budget Card */}
+      <SwipeableBudgetCard 
+        colors={colors}
+        isDarkMode={isDarkMode}
+        onCreateBudget={handleCreateBudget}
+      />
       
       {/* Active Loans / Loan Timer Section - MOVED UP */}
       {activeLoans.length > 0 ? (
@@ -799,6 +834,26 @@ export default function DashboardScreen() {
         </>
       ) : (
         // If there are no active loans, don't show this section
+        null
+      )}
+      
+      {/* Active Investments Section */}
+      {activeInvestments.length > 0 ? (
+        <>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Active Investments</Text>
+          <View style={[styles.loansContainer, { backgroundColor: colors.background }]}>
+            {activeInvestments.map((investment, index) => (
+              <InvestmentCard 
+                key={investment.id || index} 
+                investment={investment} 
+                colors={colors} 
+                isDarkMode={isDarkMode} 
+              />
+            ))}
+          </View>
+        </>
+      ) : (
+        // If there are no active investments, don't show this section
         null
       )}
       
@@ -893,6 +948,63 @@ function RecentTransactionItem({
           {amount}
         </Text>
         <Text style={[styles.transactionDate, { color: colors.subText, backgroundColor: 'transparent' }]}>{date}</Text>
+      </View>
+    </View>
+  );
+}
+
+function InvestmentCard({ investment, colors, isDarkMode }: { 
+  investment: any, 
+  colors: any, 
+  isDarkMode: boolean 
+}) {
+  const currentValue = investment.current_value || investment.initial_amount;
+  const profitLoss = currentValue - investment.initial_amount;
+  const profitLossPercentage = ((profitLoss / investment.initial_amount) * 100).toFixed(2);
+  
+  const getPerformanceColor = () => {
+    if (profitLoss > 0) return AppColors.primary; // Green for profit
+    if (profitLoss < 0) return AppColors.danger; // Red for loss
+    return colors.subText; // Neutral for no change
+  };
+  
+  return (
+    <View style={[styles.loanCard, { backgroundColor: colors.cardBackground }]}>
+      <View style={[styles.loanHeader, { backgroundColor: 'transparent' }]}>
+        <View style={[styles.loanIconContainer, { backgroundColor: AppColors.secondary }]}>
+          <FontAwesome name="line-chart" size={20} color="white" />
+        </View>
+        <View style={[styles.loanDetails, { backgroundColor: 'transparent' }]}>
+          <Text style={[styles.loanTitle, { color: colors.text }]}>
+            {investment.type || 'Investment'}
+          </Text>
+          <Text style={[styles.loanContact, { color: colors.subText }]}>
+            {investment.description || 'Investment Portfolio'}
+          </Text>
+        </View>
+        <View style={{ backgroundColor: 'transparent' }}>
+          <Text style={[styles.loanAmount, { color: AppColors.secondary }]}>
+            {investment.currency} {currentValue.toFixed(2)}
+          </Text>
+        </View>
+      </View>
+      
+      <View style={[styles.loanTimerContainer, { backgroundColor: 'transparent' }]}>
+        <View style={[styles.loanStatusContainer, { backgroundColor: 'transparent' }]}>
+          <Text style={[styles.loanStatusLabel, { color: colors.subText }]}>Performance:</Text>
+          <Text style={[styles.loanTimer, { 
+            color: getPerformanceColor(),
+            fontWeight: 'bold'
+          }]}>
+            {profitLoss >= 0 ? '+' : ''}{profitLoss.toFixed(2)} ({profitLossPercentage}%)
+          </Text>
+        </View>
+        <View style={[styles.loanProgressBar, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]}>
+          <View style={[styles.loanProgressFill, { 
+            width: `${Math.min(100, Math.max(0, Math.abs(parseFloat(profitLossPercentage))))}%`,
+            backgroundColor: getPerformanceColor()
+          }]} />
+        </View>
       </View>
     </View>
   );
@@ -1174,6 +1286,14 @@ const styles = StyleSheet.create({
     color: AppColors.danger,
     fontWeight: '600',
   },
+  summaryValueAssets: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  summaryValueLiabilities: {
+    fontSize: 18,
+    fontWeight: '600',
+  },
   balanceContainer: {
     borderTopWidth: 1,
     paddingTop: 12,
@@ -1258,7 +1378,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   
-  // Update existing styles for budget card
   budgetCard: {
     borderRadius: 12,
     marginHorizontal: 16,
@@ -1318,7 +1437,6 @@ const styles = StyleSheet.create({
     borderRadius: 5,
   },
   
-  // Update loan card styles to have transparent backgrounds
   loanHeader: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -30,7 +30,7 @@ import {
   deleteLoan,
   Loan
 } from '@/services/api';
-import { AppColors } from './_layout';
+import { AppColors } from '@/app/(tabs)/_layout';
 
 export default function LoansScreen() {
   const { isDarkMode, colors } = useTheme();
@@ -148,7 +148,7 @@ export default function LoansScreen() {
       amount: loan.amount.toString(),
       currency: loan.currency,
       contact: loan.contact || '',
-      status: loan.status,
+      status: loan.status === 'overdue' ? 'outstanding' : loan.status,
       date: loan.date,
       deadline: loan.deadline || '',
       interest_rate: loan.interest_rate?.toString() || '',
@@ -455,17 +455,6 @@ export default function LoansScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <StatusBar style={isDarkMode ? 'light' : 'dark'} />
       
-      {/* Header */}
-      <View style={[styles.header, { backgroundColor: AppColors.secondary }]}>
-        <Text style={styles.headerTitle}>Loans</Text>
-        <TouchableOpacity 
-          style={styles.addButton}
-          onPress={() => setModalVisible(true)}
-        >
-          <FontAwesome name="plus" size={16} color="white" />
-        </TouchableOpacity>
-      </View>
-      
       <ScrollView 
         style={styles.scrollView}
         refreshControl={
@@ -498,6 +487,14 @@ export default function LoansScreen() {
           )}
         </View>
       </ScrollView>
+
+      {/* Floating Action Button */}
+      <TouchableOpacity 
+        style={[styles.fab, { backgroundColor: AppColors.primary }]}
+        onPress={() => setModalVisible(true)}
+      >
+        <FontAwesome name="plus" size={24} color="white" />
+      </TouchableOpacity>
 
       {/* Add/Edit Loan Modal */}
       <Modal visible={modalVisible} animationType="slide" transparent>
@@ -699,10 +696,20 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: 'white',
   },
-  addButton: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    padding: 8,
-    borderRadius: 8,
+  fab: {
+    position: 'absolute',
+    right: 20,
+    bottom: 20,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
   },
   scrollView: {
     flex: 1,

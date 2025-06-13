@@ -37,4 +37,77 @@ body {
   body {
     background-color: #121212;
   }
-}`;
+}
+
+/* Custom ultra-thin scrollbar styles for PWA */
+::-webkit-scrollbar {
+  width: 3px;
+  height: 3px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 0;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #27AE60;
+  border-radius: 2px;
+  opacity: 0.6;
+  transition: all 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #2E8B57;
+  opacity: 0.9;
+  width: 5px;
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: #1E8449;
+  opacity: 1;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* For Firefox - ultra thin */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(39, 174, 96, 0.6) transparent;
+}
+
+/* Dark mode scrollbar */
+@media (prefers-color-scheme: dark) {
+  ::-webkit-scrollbar-thumb {
+    background: #27AE60;
+    opacity: 0.7;
+  }
+  
+  ::-webkit-scrollbar-thumb:hover {
+    background: #2E8B57;
+    opacity: 1;
+  }
+  
+  ::-webkit-scrollbar-thumb:active {
+    background: #34A85A;
+  }
+  
+  * {
+    scrollbar-color: rgba(39, 174, 96, 0.7) transparent;
+  }
+}
+
+/* Mobile optimizations - even thinner */
+@media (max-width: 768px) {
+  ::-webkit-scrollbar {
+    width: 2px;
+    height: 2px;
+  }
+  
+  ::-webkit-scrollbar-thumb:hover {
+    width: 3px;
+  }
+}
+`;

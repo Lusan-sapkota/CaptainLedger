@@ -12,11 +12,19 @@ import {
   Alert
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { LinearGradient } from 'expo-linear-gradient';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useTheme } from '@/components/ThemeProvider';
 import { AppColors } from '@/app/(tabs)/_layout';
-import { LinearGradient } from 'expo-linear-gradient';
+import FloatingActionButton from '@/components/FloatingActionButton';
+import { 
+  getBudgets, 
+  createBudget, 
+  deleteBudget, 
+  getBudgetCategories,
+  Budget as ApiBudget
+} from '@/services/api';
 
 interface Budget {
   id: string;
@@ -24,7 +32,7 @@ interface Budget {
   category: string;
   amount: number;
   spent: number;
-  period: 'weekly' | 'monthly' | 'yearly';
+  period: 'daily' | 'weekly' | 'monthly' | 'yearly';
   color: string;
 }
 
@@ -34,46 +42,19 @@ export default function BudgetsScreen() {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [showModal, setShowModal] = useState(false);
-  const [budgets, setBudgets] = useState<Budget[]>([
-    {
-      id: '1',
-      name: 'Food & Dining',
-      category: 'Food',
-      amount: 500,
-      spent: 320,
-      period: 'monthly',
-      color: '#FF6B6B'
-    },
-    {
-      id: '2',
-      name: 'Transportation',
-      category: 'Transport',
-      amount: 200,
-      spent: 150,
-      period: 'monthly',
-      color: '#4ECDC4'
-    },
-    {
-      id: '3',
-      name: 'Entertainment',
-      category: 'Entertainment',
-      amount: 150,
-      spent: 180,
-      period: 'monthly',
-      color: '#45B7D1'
-    }
-  ]);
+  const [budgets, setBudgets] = useState<Budget[]>([]);
 
   const [newBudget, setNewBudget] = useState({
     name: '',
     category: '',
     amount: '',
-    period: 'monthly' as 'weekly' | 'monthly' | 'yearly'
+    period: 'monthly' as 'daily' | 'weekly' | 'monthly' | 'yearly'
   });
 
-  const [selectedPeriod, setSelectedPeriod] = useState<'weekly' | 'monthly' | 'yearly'>('monthly');
+  const [selectedPeriod, setSelectedPeriod] = useState<'daily' | 'weekly' | 'monthly' | 'yearly'>('monthly');
 
   const periods = [
+    { id: 'daily', label: 'Daily' },
     { id: 'weekly', label: 'Weekly' },
     { id: 'monthly', label: 'Monthly' },
     { id: 'yearly', label: 'Yearly' }
@@ -140,20 +121,6 @@ export default function BudgetsScreen() {
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <StatusBar style={isDarkMode ? 'light' : 'dark'} />
-      
-      {/* Header */}
-      <LinearGradient
-        colors={isDarkMode ? ['#2C3E50', '#34495E'] : [AppColors.primary, AppColors.darkGreen]}
-        style={styles.header}
-      >
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <FontAwesome name="arrow-left" size={20} color="white" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Budgets</Text>
-        <TouchableOpacity onPress={() => setShowModal(true)} style={styles.addButton}>
-          <FontAwesome name="plus" size={20} color="white" />
-        </TouchableOpacity>
-      </LinearGradient>
 
       <ScrollView 
         style={styles.content}
@@ -181,34 +148,36 @@ export default function BudgetsScreen() {
         </View>
 
         {/* Budget Overview */}
-        <View style={[styles.overviewCard, { backgroundColor: colors.cardBackground }]}>
-          <Text style={[styles.overviewTitle, { color: colors.text }]}>
-            {selectedPeriod.charAt(0).toUpperCase() + selectedPeriod.slice(1)} Overview
-          </Text>
-          <View style={styles.overviewStats}>
-            <View style={styles.overviewStat}>
-              <Text style={[styles.overviewLabel, { color: colors.subText }]}>Total Budget</Text>
-              <Text style={[styles.overviewValue, { color: AppColors.primary }]}>
-                ${totalBudget.toFixed(2)}
-              </Text>
-            </View>
-            <View style={styles.overviewStat}>
-              <Text style={[styles.overviewLabel, { color: colors.subText }]}>Total Spent</Text>
-              <Text style={[styles.overviewValue, { color: AppColors.danger }]}>
-                ${totalSpent.toFixed(2)}
-              </Text>
-            </View>
-            <View style={styles.overviewStat}>
-              <Text style={[styles.overviewLabel, { color: colors.subText }]}>Remaining</Text>
-              <Text style={[
-                styles.overviewValue, 
-                { color: totalBudget - totalSpent >= 0 ? AppColors.primary : AppColors.danger }
-              ]}>
-                ${(totalBudget - totalSpent).toFixed(2)}
-              </Text>
+        {filteredBudgets.length > 0 && (
+          <View style={[styles.overviewCard, { backgroundColor: colors.cardBackground }]}>
+            <Text style={[styles.overviewTitle, { color: colors.text }]}>
+              {selectedPeriod.charAt(0).toUpperCase() + selectedPeriod.slice(1)} Overview
+            </Text>
+            <View style={styles.overviewStats}>
+              <View style={styles.overviewStat}>
+                <Text style={[styles.overviewLabel, { color: colors.subText }]}>Total Budget</Text>
+                <Text style={[styles.overviewValue, { color: AppColors.primary }]}>
+                  ${totalBudget.toFixed(2)}
+                </Text>
+              </View>
+              <View style={styles.overviewStat}>
+                <Text style={[styles.overviewLabel, { color: colors.subText }]}>Total Spent</Text>
+                <Text style={[styles.overviewValue, { color: AppColors.danger }]}>
+                  ${totalSpent.toFixed(2)}
+                </Text>
+              </View>
+              <View style={styles.overviewStat}>
+                <Text style={[styles.overviewLabel, { color: colors.subText }]}>Remaining</Text>
+                <Text style={[
+                  styles.overviewValue, 
+                  { color: totalBudget - totalSpent >= 0 ? AppColors.primary : AppColors.danger }
+                ]}>
+                  ${(totalBudget - totalSpent).toFixed(2)}
+                </Text>
+              </View>
             </View>
           </View>
-        </View>
+        )}
 
         {/* Budget List */}
         {filteredBudgets.map((budget) => (
@@ -277,11 +246,17 @@ export default function BudgetsScreen() {
               No {selectedPeriod} budgets yet
             </Text>
             <Text style={[styles.emptySubtext, { color: colors.subText }]}>
-              Create your first budget to start tracking your spending
+              Press the + button to create your first budget
             </Text>
           </View>
         )}
       </ScrollView>
+
+      {/* Floating Action Button */}
+      <FloatingActionButton 
+        onPress={() => setShowModal(true)}
+        icon="plus"
+      />
 
       {/* Create Budget Modal */}
       <Modal visible={showModal} animationType="slide" transparent>
@@ -394,9 +369,8 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: 'bold',
     color: 'white',
-  },
-  addButton: {
-    padding: 8,
+    textAlign: 'center',
+    flex: 1,
   },
   content: {
     flex: 1,

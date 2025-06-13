@@ -36,7 +36,7 @@ import {
   ROIEntry,
   InvestmentAnalytics
 } from '@/services/api';
-import { AppColors } from './_layout';
+import { AppColors } from './(tabs)/_layout';
 
 export default function InvestmentsScreen() {
   const { isDarkMode, colors } = useTheme();
@@ -214,10 +214,10 @@ export default function InvestmentsScreen() {
       initial_amount: investment.initial_amount.toString(),
       current_value: investment.current_value?.toString() || '',
       expected_roi: investment.expected_roi?.toString() || '',
-      currency: investment.currency,
+      currency: investment.currency || 'USD',
       purchase_date: investment.purchase_date,
       maturity_date: investment.maturity_date || '',
-      status: investment.status === 'partial_sold' ? 'sold' : investment.status,
+      status: (investment.status || 'active') as 'active' | 'matured' | 'sold',
       notes: investment.notes || ''
     });
     setEditingInvestmentId(investment.id);
@@ -394,17 +394,6 @@ export default function InvestmentsScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <StatusBar style={isDarkMode ? 'light' : 'dark'} />
       
-      {/* Header */}
-      <View style={[styles.header, { backgroundColor: AppColors.secondary }]}>
-        <Text style={styles.headerTitle}>Investments</Text>
-        <TouchableOpacity 
-          style={styles.addButton}
-          onPress={() => setModalVisible(true)}
-        >
-          <FontAwesome name="plus" size={16} color="white" />
-        </TouchableOpacity>
-      </View>
-      
       <ScrollView 
         style={styles.scrollView}
         refreshControl={
@@ -438,6 +427,14 @@ export default function InvestmentsScreen() {
           )}
         </View>
       </ScrollView>
+
+      {/* Floating Action Button */}
+      <TouchableOpacity 
+        style={[styles.fab, { backgroundColor: AppColors.primary }]}
+        onPress={() => setModalVisible(true)}
+      >
+        <FontAwesome name="plus" size={24} color="white" />
+      </TouchableOpacity>
 
       {/* Add/Edit Investment Modal */}
       <Modal visible={modalVisible} animationType="slide" transparent>
@@ -768,10 +765,20 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: 'white',
   },
-  addButton: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    padding: 8,
-    borderRadius: 8,
+  fab: {
+    position: 'absolute',
+    right: 20,
+    bottom: 20,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
   },
   scrollView: {
     flex: 1,
