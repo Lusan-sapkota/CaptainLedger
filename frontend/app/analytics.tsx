@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -17,6 +17,7 @@ import { AppColors } from '@/app/(tabs)/_layout';
 import { getTransactions, getTransactionSummary } from '@/services/api';
 import { LinearGradient } from 'expo-linear-gradient';
 import { LineChart, PieChart } from 'react-native-chart-kit';
+import { useCurrency } from '@/components/CurrencyProvider';
 
 const { width } = Dimensions.get('window');
 
@@ -31,6 +32,7 @@ interface AnalyticsData {
 
 export default function AnalyticsScreen() {
   const { isDarkMode, colors } = useTheme();
+  const { formatCurrency, convertCurrency } = useCurrency();
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -42,6 +44,17 @@ export default function AnalyticsScreen() {
     topCategories: [],
     monthlyTrend: []
   });
+
+  // Formatted currency states
+  const [formattedAnalytics, setFormattedAnalytics] = useState({
+    totalIncome: '',
+    totalExpenses: '',
+    netSavings: '',
+    dailySpending: ''
+  });
+
+  const [formattedCategories, setFormattedCategories] = useState<{[key: string]: string}>({});
+
   const [selectedPeriod, setSelectedPeriod] = useState('month');
 
   const periods = [
@@ -56,7 +69,7 @@ export default function AnalyticsScreen() {
       const response = await getTransactions();
       if (response?.data?.transactions) {
         const transactions = response.data.transactions;
-        processAnalytics(transactions);
+        await processAnalytics(transactions);
       }
     } catch (error) {
       console.error('Error fetching analytics:', error);
@@ -66,7 +79,7 @@ export default function AnalyticsScreen() {
     }
   };
 
-  const processAnalytics = (transactions: any[]) => {
+  const processAnalytics = useCallback(async (transactions: any[]) => {
     const now = new Date();
     let filteredTransactions = transactions;
 
@@ -87,43 +100,119 @@ export default function AnalyticsScreen() {
       filteredTransactions = transactions.filter(t => new Date(t.date) >= cutoffDate);
     }
 
-    const totalIncome = filteredTransactions
-      .filter(t => t.amount > 0)
-      .reduce((sum, t) => sum + t.amount, 0);
+    // Convert transactions to primary currency and calculate totals
+    let totalIncome = 0;
+    let totalExpenses = 0;
 
-    const totalExpenses = Math.abs(filteredTransactions
-      .filter(t => t.amount < 0)
-      .reduce((sum, t) => sum + t.amount, 0));
-
-    // Calculate top categories
-    const categoryMap = new Map();
-    filteredTransactions.forEach(t => {
-      const category = t.category || 'Other';
-      if (categoryMap.has(category)) {
-        const existing = categoryMap.get(category);
-        categoryMap.set(category, {
-          amount: existing.amount + Math.abs(t.amount),
-          count: existing.count + 1
-        });
-      } else {
-        categoryMap.set(category, { amount: Math.abs(t.amount), count: 1 });
+    for (const t of filteredTransactions) {
+      try {
+        const convertedAmount = t.currency ? 
+          await convertCurrency(Math.abs(t.amount), t.currency) : 
+          Math.abs(t.amount);
+        
+        if (t.amount > 0) {
+          totalIncome += convertedAmount;
+        } else {
+          totalExpenses += convertedAmount;
+        }
+      } catch (error) {
+        console.error('Error converting transaction currency:', error);
+        // Fallback to original amount
+        if (t.amount > 0) {
+          totalIncome += Math.abs(t.amount);
+        } else {
+          totalExpenses += Math.abs(t.amount);
+        }
       }
-    });
+    }
+
+    // Calculate top categories with currency conversion
+    const categoryMap = new Map();
+    for (const t of filteredTransactions) {
+      const category = t.category || 'Other';
+      try {
+        const convertedAmount = t.currency ? 
+          await convertCurrency(Math.abs(t.amount), t.currency) : 
+          Math.abs(t.amount);
+        
+        if (categoryMap.has(category)) {
+          const existing = categoryMap.get(category);
+          categoryMap.set(category, {
+            amount: existing.amount + convertedAmount,
+            count: existing.count + 1
+          });
+        } else {
+          categoryMap.set(category, { amount: convertedAmount, count: 1 });
+        }
+      } catch (error) {
+        console.error('Error converting category amount:', error);
+        // Fallback to original amount
+        if (categoryMap.has(category)) {
+          const existing = categoryMap.get(category);
+          categoryMap.set(category, {
+            amount: existing.amount + Math.abs(t.amount),
+            count: existing.count + 1
+          });
+        } else {
+          categoryMap.set(category, { amount: Math.abs(t.amount), count: 1 });
+        }
+      }
+    }
 
     const topCategories = Array.from(categoryMap.entries())
       .map(([category, data]) => ({ category, ...data }))
       .sort((a, b) => b.amount - a.amount)
       .slice(0, 5);
 
+    const netSavings = totalIncome - totalExpenses;
+
     setAnalytics({
       totalIncome,
       totalExpenses,
-      netSavings: totalIncome - totalExpenses,
+      netSavings,
       transactionCount: filteredTransactions.length,
       topCategories,
       monthlyTrend: []
     });
-  };
+
+    // Format currency values
+    try {
+      const [formattedIncome, formattedExpenses, formattedSavings, formattedDaily] = 
+        await Promise.all([
+          formatCurrency(totalIncome),
+          formatCurrency(totalExpenses),
+          formatCurrency(netSavings),
+          formatCurrency(totalExpenses / 30)
+        ]);
+
+      setFormattedAnalytics({
+        totalIncome: formattedIncome,
+        totalExpenses: formattedExpenses,
+        netSavings: formattedSavings,
+        dailySpending: formattedDaily
+      });
+
+      // Format category amounts
+      const categoryFormatting: {[key: string]: string} = {};
+      for (const category of topCategories) {
+        try {
+          categoryFormatting[category.category] = await formatCurrency(category.amount);
+        } catch (error) {
+          categoryFormatting[category.category] = category.amount.toFixed(2);
+        }
+      }
+      setFormattedCategories(categoryFormatting);
+    } catch (error) {
+      console.error('Error formatting analytics currencies:', error);
+      // Fallback to basic formatting (no currency symbol)
+      setFormattedAnalytics({
+        totalIncome: totalIncome.toFixed(2),
+        totalExpenses: totalExpenses.toFixed(2),
+        netSavings: netSavings.toFixed(2),
+        dailySpending: (totalExpenses / 30).toFixed(2)
+      });
+    }
+  }, [convertCurrency, formatCurrency, selectedPeriod]);
 
   useEffect(() => {
     fetchAnalytics();
@@ -185,7 +274,7 @@ export default function AnalyticsScreen() {
               </LinearGradient>
               <Text style={[styles.summaryLabel, { color: colors.subText }]}>Income</Text>
               <Text style={[styles.summaryValue, { color: AppColors.primary }]}>
-                ${analytics.totalIncome.toFixed(2)}
+                {formattedAnalytics.totalIncome}
               </Text>
             </View>
 
@@ -195,7 +284,7 @@ export default function AnalyticsScreen() {
               </LinearGradient>
               <Text style={[styles.summaryLabel, { color: colors.subText }]}>Expenses</Text>
               <Text style={[styles.summaryValue, { color: AppColors.danger }]}>
-                ${analytics.totalExpenses.toFixed(2)}
+                {formattedAnalytics.totalExpenses}
               </Text>
             </View>
           </View>
@@ -210,7 +299,7 @@ export default function AnalyticsScreen() {
                 styles.summaryValue, 
                 { color: analytics.netSavings >= 0 ? AppColors.primary : AppColors.danger }
               ]}>
-                ${analytics.netSavings.toFixed(2)}
+                {formattedAnalytics.netSavings}
               </Text>
             </View>
 
@@ -321,7 +410,7 @@ export default function AnalyticsScreen() {
                 </View>
               </View>
               <Text style={[styles.categoryAmount, { color: colors.text }]}>
-                ${category.amount.toFixed(2)}
+                {formattedCategories[category.category] || category.amount.toFixed(2)}
               </Text>
             </View>
           ))}
@@ -336,7 +425,7 @@ export default function AnalyticsScreen() {
             <View style={styles.insightText}>
               <Text style={[styles.insightTitle, { color: colors.text }]}>Average Daily Spending</Text>
               <Text style={[styles.insightValue, { color: colors.subText }]}>
-                ${(analytics.totalExpenses / 30).toFixed(2)}
+                {formattedAnalytics.dailySpending}
               </Text>
             </View>
           </View>

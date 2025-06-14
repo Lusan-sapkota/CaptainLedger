@@ -985,6 +985,81 @@ export const getInvestmentAnalytics = async () => {
   }
 };
 
+// Currency API functions
+export interface Currency {
+  id: string;
+  code: string;
+  name: string;
+  symbol: string;
+  country: string;
+  decimal_places: number;
+  is_active: boolean;
+}
+
+export interface CurrencyPreference {
+  id: string;
+  currency_code: string;
+  is_primary: boolean;
+  display_order: number;
+}
+
+export const getCurrencies = (): Promise<AxiosResponse<{ currencies: Currency[] }>> => {
+  return api.get('/currencies');
+};
+
+export const getUserCurrencyPreferences = (): Promise<AxiosResponse<{ preferences: CurrencyPreference[] }>> => {
+  return api.get('/currencies/preferences');
+};
+
+export const updateCurrencyPreferences = (data: {
+  primary_currency?: string;
+  currency_code?: string;
+  is_primary?: boolean;
+}): Promise<AxiosResponse<any>> => {
+  return api.post('/currencies/preferences', {
+    currency_code: data.primary_currency || data.currency_code,
+    is_primary: data.is_primary ?? true
+  });
+};
+
+export const getExchangeRate = (fromCurrency: string, toCurrency: string): Promise<AxiosResponse<{ rate: number }>> => {
+  return api.get(`/currencies/exchange-rate?from=${fromCurrency}&to=${toCurrency}`);
+};
+
+// Bulk currency conversion interfaces
+export interface BulkConversionItem {
+  item_id: string;
+  item_type: string; // 'transaction', 'budget', 'loan', 'investment', etc.
+  amount: number;
+  from_currency: string;
+  to_currency: string;
+}
+
+export interface BulkConversionResult {
+  item_id: string;
+  item_type: string;
+  success: boolean;
+  original_amount?: number;
+  converted_amount?: number;
+  from_currency?: string;
+  to_currency?: string;
+  exchange_rate?: number;
+  rate_source?: string;
+  error?: string;
+}
+
+export interface BulkConversionResponse {
+  conversions: BulkConversionResult[];
+  total_requested: number;
+  successful: number;
+  failed: number;
+  timestamp: string;
+}
+
+export const convertBulkCurrency = (conversions: BulkConversionItem[]): Promise<AxiosResponse<BulkConversionResponse>> => {
+  return api.post('/currencies/convert-bulk', { conversions });
+};
+
 // Export the api instance for use elsewhere
 export default api;
 

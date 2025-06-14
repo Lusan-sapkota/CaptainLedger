@@ -5,6 +5,7 @@ import { Text, View } from '@/components/Themed';
 import { AppColors } from './(tabs)/_layout';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useTheme } from '@/components/ThemeProvider';
+import { useCurrency } from '@/components/CurrencyProvider';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { removeTrustedDevice, exportDatabase, importDatabase, importDatabaseFromUri, getImportOptions } from '@/services/api';
 import { getDeviceIdentifier } from '@/utils/device';
@@ -15,6 +16,7 @@ import * as Sharing from 'expo-sharing';
 import { useAlert } from '@/components/AlertProvider';
 import BiometricAuthManager from '@/utils/biometricAuth';
 import BiometricSettingsModal from '@/components/BiometricSettingsModal';
+import CurrencySettingsModal from '@/components/CurrencySettingsModal';
 
 const LoginHistoryList = ({ colors }: { colors: any }) => {
   const [loginHistory, setLoginHistory] = useState<any[]>([]);
@@ -427,6 +429,7 @@ const ImportOptionsModal = ({ visible, onClose, onImport }: {
 
 export default function SettingsScreen() {
   const { isDarkMode, colors, toggleTheme } = useTheme();
+  const { primaryCurrency, currencies } = useCurrency();
   
   // Settings state
   const [autoSync, setAutoSync] = useState(true);
@@ -434,11 +437,11 @@ export default function SettingsScreen() {
   const [biometricLogin, setBiometricLogin] = useState(false);
   const [appLock, setAppLock] = useState(false);
   const [exportEnabled, setExportEnabled] = useState(true);
-  const [currencyCode, setCurrencyCode] = useState('USD');
   const [language, setLanguage] = useState('English');
   
-  // Biometric settings modal
+  // Modal states
   const [biometricModalVisible, setBiometricModalVisible] = useState(false);
+  const [currencyModalVisible, setCurrencyModalVisible] = useState(false);
   const [currentUserData, setCurrentUserData] = useState<{ email: string; userId: string } | null>(null);
   
   // Add these state variables with the existing ones
@@ -763,8 +766,8 @@ export default function SettingsScreen() {
         {renderSettingOption(
           "Currency",
           "Set your preferred currency",
-          currencyCode,
-          () => Alert.alert("Currency", "This feature will be available soon")
+          primaryCurrency,
+          () => setCurrencyModalVisible(true)
         )}
         
         {renderSettingOption(
@@ -813,6 +816,12 @@ export default function SettingsScreen() {
         visible={importOptionsVisible}
         onClose={() => setImportOptionsVisible(false)}
         onImport={handleImport}
+      />
+
+      {/* Currency Settings Modal */}
+      <CurrencySettingsModal
+        visible={currencyModalVisible}
+        onClose={() => setCurrencyModalVisible(false)}
       />
     </ScrollView>
   );

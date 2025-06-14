@@ -15,10 +15,35 @@ from flask import current_app
 
 class EmailService:
     def __init__(self):
-        self.smtp_server = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
-        self.smtp_port = int(os.getenv('SMTP_PORT', '587'))
-        self.email = os.getenv('EMAIL_ADDRESS')
-        self.password = os.getenv('EMAIL_PASSWORD')
+        # Lazy load environment variables to ensure they're available
+        self._smtp_server = None
+        self._smtp_port = None
+        self._email = None
+        self._password = None
+        
+    @property
+    def smtp_server(self):
+        if self._smtp_server is None:
+            self._smtp_server = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
+        return self._smtp_server
+        
+    @property  
+    def smtp_port(self):
+        if self._smtp_port is None:
+            self._smtp_port = int(os.getenv('SMTP_PORT', '587'))
+        return self._smtp_port
+        
+    @property
+    def email(self):
+        if self._email is None:
+            self._email = os.getenv('SENDER_EMAIL')
+        return self._email
+        
+    @property
+    def password(self):
+        if self._password is None:
+            self._password = os.getenv('SENDER_PASSWORD')
+        return self._password
         
     def create_transaction_pdf(self, transactions, period_name, user_name):
         """Create a PDF report of transactions"""
@@ -264,6 +289,35 @@ class EmailService:
             
         except Exception as e:
             current_app.logger.error(f"Error sending monthly report: {e}")
+            raise
+
+    def send_generic_email(self, to_email, subject, html_body):
+        """Send a generic HTML email without attachment"""
+        try:
+            # Check if email credentials are available
+            if not self.email or not self.password:
+                current_app.logger.error(f"Email credentials not configured: email={self.email}, password={'*' * len(self.password) if self.password else None}")
+                raise Exception("Email credentials not configured")
+            
+            msg = MIMEMultipart()
+            msg['From'] = self.email
+            msg['To'] = to_email
+            msg['Subject'] = subject
+            
+            # Add HTML body
+            msg.attach(MIMEText(html_body, 'html'))
+            
+            # Send email
+            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
+            server.starttls()
+            server.login(self.email, self.password)
+            server.send_message(msg)
+            server.quit()
+            
+            current_app.logger.info(f"Generic email sent successfully to {to_email}")
+            
+        except Exception as e:
+            current_app.logger.error(f"Error sending generic email: {e}")
             raise
 
     def send_email_with_attachment(self, to_email, subject, html_body, attachment_path, attachment_name):

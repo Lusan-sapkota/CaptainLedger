@@ -22,6 +22,7 @@ import { StatusBar } from 'expo-status-bar';
 // Local components
 import { useAlert } from '@/components/AlertProvider';
 import { useTheme } from '@/components/ThemeProvider';
+import { useCurrency } from '@/components/CurrencyProvider';
 
 // Services & API
 import {
@@ -41,9 +42,15 @@ import { AppColors } from './(tabs)/_layout';
 export default function InvestmentsScreen() {
   const { isDarkMode, colors } = useTheme();
   const { showAlert } = useAlert();
+  const { formatCurrency, convertCurrency } = useCurrency();
   
   // States
   const [investments, setInvestments] = useState<Investment[]>([]);
+  const [formattedInvestments, setFormattedInvestments] = useState<(Investment & {
+    formattedInitialAmount?: string;
+    formattedCurrentValue?: string;
+    formattedROI?: string;
+  })[]>([]);
   const [analytics, setAnalytics] = useState<InvestmentAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -97,6 +104,45 @@ export default function InvestmentsScreen() {
       const response = await getInvestments();
       if (response?.data?.investments) {
         setInvestments(response.data.investments);
+        
+        // Format investments with currency conversion
+        const formatted = await Promise.all(
+          response.data.investments.map(async (inv: Investment) => {
+            try {
+              const convertedInitial = inv.currency ? 
+                await convertCurrency(inv.initial_amount, inv.currency) : 
+                inv.initial_amount;
+              const convertedCurrent = inv.currency ? 
+                await convertCurrency(inv.current_value || inv.initial_amount, inv.currency) : 
+                (inv.current_value || inv.initial_amount);
+              
+              const roi = convertedCurrent - convertedInitial;
+              
+              const [formattedInitial, formattedCurrent, formattedROI] = await Promise.all([
+                formatCurrency(convertedInitial),
+                formatCurrency(convertedCurrent),
+                formatCurrency(roi)
+              ]);
+
+              return {
+                ...inv,
+                formattedInitialAmount: formattedInitial,
+                formattedCurrentValue: formattedCurrent,
+                formattedROI: formattedROI
+              };
+            } catch (error) {
+              console.error('Error formatting investment currency:', error);
+              return {
+                ...inv,
+                formattedInitialAmount: await formatCurrency(inv.initial_amount).catch(() => inv.initial_amount.toFixed(2)),
+                formattedCurrentValue: await formatCurrency(inv.current_value || inv.initial_amount).catch(() => (inv.current_value || inv.initial_amount).toFixed(2)),
+                formattedROI: await formatCurrency((inv.current_value || inv.initial_amount) - inv.initial_amount).catch(() => ((inv.current_value || inv.initial_amount) - inv.initial_amount).toFixed(2))
+              };
+            }
+          })
+        );
+        
+        setFormattedInvestments(formatted);
       }
     } catch (err) {
       console.error('Error loading investments:', err);
@@ -279,45 +325,81 @@ export default function InvestmentsScreen() {
   const renderAnalyticsCard = () => {
     if (!analytics) return null;
 
-    return (
-      <View style={[styles.analyticsCard, { backgroundColor: colors.cardBackground }]}>
-        <Text style={[styles.cardTitle, { color: colors.text }]}>Investment Overview</Text>
-        
-        <View style={[styles.analyticsGrid, { backgroundColor: 'transparent' }]}>
-          <View style={[styles.analyticsItem, { backgroundColor: 'transparent' }]}>
-            <Text style={[styles.analyticsLabel, { color: colors.subText }]}>Total Invested</Text>
-            <Text style={[styles.analyticsValue, { color: AppColors.primary }]}>
-              ${analytics.total_invested.toFixed(2)}
-            </Text>
-          </View>
+    const AnalyticsCardComponent = () => {
+      const [formattedAnalytics, setFormattedAnalytics] = useState({
+        totalInvested: '',
+        totalCurrentValue: '',
+        totalGainLoss: ''
+      });
+
+      useEffect(() => {
+        const formatAnalyticsValues = async () => {
+          try {
+            const [formattedInvested, formattedCurrent, formattedGainLoss] = await Promise.all([
+              formatCurrency(analytics.total_invested),
+              formatCurrency(analytics.total_current_value),
+              formatCurrency(Math.abs(analytics.total_gain_loss))
+            ]);
+
+            setFormattedAnalytics({
+              totalInvested: formattedInvested,
+              totalCurrentValue: formattedCurrent,
+              totalGainLoss: (analytics.total_gain_loss >= 0 ? '+' : '-') + formattedGainLoss
+            });
+          } catch (error) {
+            // Fallback formatting
+            setFormattedAnalytics({
+              totalInvested: analytics.total_invested.toFixed(2),
+              totalCurrentValue: analytics.total_current_value.toFixed(2),
+              totalGainLoss: `${analytics.total_gain_loss >= 0 ? '+' : ''}${analytics.total_gain_loss.toFixed(2)}`
+            });
+          }
+        };
+        formatAnalyticsValues();
+      }, [analytics, formatCurrency]);
+
+      return (
+        <View style={[styles.analyticsCard, { backgroundColor: colors.cardBackground }]}>
+          <Text style={[styles.cardTitle, { color: colors.text }]}>Investment Overview</Text>
           
-          <View style={[styles.analyticsItem, { backgroundColor: 'transparent' }]}>
-            <Text style={[styles.analyticsLabel, { color: colors.subText }]}>Current Value</Text>
-            <Text style={[styles.analyticsValue, { color: AppColors.secondary }]}>
-              ${analytics.total_current_value.toFixed(2)}
-            </Text>
-          </View>
-          
-          <View style={[styles.analyticsItem, { backgroundColor: 'transparent' }]}>
-            <Text style={[styles.analyticsLabel, { color: colors.subText }]}>Total ROI</Text>
-            <Text style={[styles.analyticsValue, { 
-              color: analytics.total_roi_percentage >= 0 ? AppColors.primary : AppColors.danger 
-            }]}>
-              {analytics.total_roi_percentage.toFixed(2)}%
-            </Text>
-          </View>
-          
-          <View style={[styles.analyticsItem, { backgroundColor: 'transparent' }]}>
-            <Text style={[styles.analyticsLabel, { color: colors.subText }]}>Gain/Loss</Text>
-            <Text style={[styles.analyticsValue, { 
-              color: analytics.total_gain_loss >= 0 ? AppColors.primary : AppColors.danger 
-            }]}>
-              {analytics.total_gain_loss >= 0 ? '+' : ''}${analytics.total_gain_loss.toFixed(2)}
-            </Text>
+          <View style={[styles.analyticsGrid, { backgroundColor: 'transparent' }]}>
+            <View style={[styles.analyticsItem, { backgroundColor: 'transparent' }]}>
+              <Text style={[styles.analyticsLabel, { color: colors.subText }]}>Total Invested</Text>
+              <Text style={[styles.analyticsValue, { color: AppColors.primary }]}>
+                {formattedAnalytics.totalInvested}
+              </Text>
+            </View>
+            
+            <View style={[styles.analyticsItem, { backgroundColor: 'transparent' }]}>
+              <Text style={[styles.analyticsLabel, { color: colors.subText }]}>Current Value</Text>
+              <Text style={[styles.analyticsValue, { color: AppColors.secondary }]}>
+                {formattedAnalytics.totalCurrentValue}
+              </Text>
+            </View>
+            
+            <View style={[styles.analyticsItem, { backgroundColor: 'transparent' }]}>
+              <Text style={[styles.analyticsLabel, { color: colors.subText }]}>Total ROI</Text>
+              <Text style={[styles.analyticsValue, { 
+                color: analytics.total_roi_percentage >= 0 ? AppColors.primary : AppColors.danger 
+              }]}>
+                {analytics.total_roi_percentage.toFixed(2)}%
+              </Text>
+            </View>
+            
+            <View style={[styles.analyticsItem, { backgroundColor: 'transparent' }]}>
+              <Text style={[styles.analyticsLabel, { color: colors.subText }]}>Gain/Loss</Text>
+              <Text style={[styles.analyticsValue, { 
+                color: analytics.total_gain_loss >= 0 ? AppColors.primary : AppColors.danger 
+              }]}>
+                {formattedAnalytics.totalGainLoss}
+              </Text>
+            </View>
           </View>
         </View>
-      </View>
-    );
+      );
+    };
+
+    return <AnalyticsCardComponent />;
   };
 
   const renderInvestmentItem = ({ item }: { item: Investment }) => {
@@ -348,7 +430,7 @@ export default function InvestmentsScreen() {
         
         <View style={[styles.investmentRight, { backgroundColor: 'transparent' }]}>
           <Text style={[styles.investmentValue, { color: colors.text }]}>
-            ${item.current_value?.toFixed(2) || item.initial_amount.toFixed(2)}
+            {formattedInvestments.find(fi => fi.id === item.id)?.formattedCurrentValue || (item.current_value || item.initial_amount).toFixed(2)}
           </Text>
           <Text style={[styles.investmentROI, { color: roiColor }]}>
             {(item.actual_roi || 0) >= 0 ? '+' : ''}{(item.actual_roi || 0).toFixed(2)}%
@@ -682,26 +764,57 @@ export default function InvestmentsScreen() {
                     const roi = ((currentValue - initialAmount) / initialAmount) * 100;
                     const gainLoss = currentValue - initialAmount;
                     
-                    return (
-                      <>
-                        <Text style={[styles.roiPreviewText, { color: colors.text }]}>
-                          Initial: ${initialAmount.toFixed(2)}
-                        </Text>
-                        <Text style={[styles.roiPreviewText, { color: colors.text }]}>
-                          Current: ${currentValue.toFixed(2)}
-                        </Text>
-                        <Text style={[styles.roiPreviewText, { 
-                          color: roi >= 0 ? AppColors.primary : AppColors.danger 
-                        }]}>
-                          ROI: {roi >= 0 ? '+' : ''}{roi.toFixed(2)}%
-                        </Text>
-                        <Text style={[styles.roiPreviewText, { 
-                          color: gainLoss >= 0 ? AppColors.primary : AppColors.danger 
-                        }]}>
-                          Gain/Loss: {gainLoss >= 0 ? '+' : ''}${gainLoss.toFixed(2)}
-                        </Text>
-                      </>
-                    );
+                    const ROIPreviewComponent = () => {
+                      const [formattedPreview, setFormattedPreview] = useState({
+                        initial: initialAmount.toFixed(2),
+                        current: currentValue.toFixed(2),
+                        gainLoss: `${gainLoss >= 0 ? '+' : ''}${gainLoss.toFixed(2)}`
+                      });
+
+                      useEffect(() => {
+                        const formatPreviewValues = async () => {
+                          try {
+                            const [formattedInitial, formattedCurrent, formattedGainLoss] = await Promise.all([
+                              formatCurrency(initialAmount),
+                              formatCurrency(currentValue),
+                              formatCurrency(Math.abs(gainLoss))
+                            ]);
+
+                            setFormattedPreview({
+                              initial: formattedInitial,
+                              current: formattedCurrent,
+                              gainLoss: (gainLoss >= 0 ? '+' : '-') + formattedGainLoss
+                            });
+                          } catch (error) {
+                            // Fallback already set in initial state
+                          }
+                        };
+                        formatPreviewValues();
+                      }, [initialAmount, currentValue, gainLoss, formatCurrency]);
+
+                      return (
+                        <>
+                          <Text style={[styles.roiPreviewText, { color: colors.text }]}>
+                            Initial: {formattedPreview.initial}
+                          </Text>
+                          <Text style={[styles.roiPreviewText, { color: colors.text }]}>
+                            Current: {formattedPreview.current}
+                          </Text>
+                          <Text style={[styles.roiPreviewText, { 
+                            color: roi >= 0 ? AppColors.primary : AppColors.danger 
+                          }]}>
+                            ROI: {roi >= 0 ? '+' : ''}{roi.toFixed(2)}%
+                          </Text>
+                          <Text style={[styles.roiPreviewText, { 
+                            color: gainLoss >= 0 ? AppColors.primary : AppColors.danger 
+                          }]}>
+                            Gain/Loss: {formattedPreview.gainLoss}
+                          </Text>
+                        </>
+                      );
+                    };
+
+                    return <ROIPreviewComponent />;
                   })()}
                 </View>
               )}

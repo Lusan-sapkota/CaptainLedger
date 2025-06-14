@@ -11,6 +11,8 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import { ThemeProvider } from '@/components/ThemeProvider';
+import { AlertProvider } from '@/components/AlertProvider';
+import { CurrencyProvider } from '@/components/CurrencyProvider';
 import { View, ActivityIndicator, Platform } from 'react-native';
 import { AppColors } from './(tabs)/_layout';
 import { getUserProfile, configureApi } from '@/services/api';
@@ -638,24 +640,28 @@ function RootLayoutNav() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <ThemeProvider>
-        <NavigationThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-          <Stack>
-            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-            <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
-            <Stack.Screen name="notifications" options={{ title: "Notifications" }} />
-            <Stack.Screen name="settings" options={{ title: "Settings" }} />
-            <Stack.Screen name="onboarding" options={{ headerShown: false, gestureEnabled: false }} />
-            <Stack.Screen name="auth" options={{ headerShown: false, gestureEnabled: false }} />
-            <Stack.Screen name="terms" options={{ title: "Terms & Conditions" }} />
-            <Stack.Screen name="privacy" options={{ title: "Privacy Policy" }} />
-            <Stack.Screen name="documentation" options={{ title: "Documentation" }} />
-            <Stack.Screen name="forgotPassword" options={{ headerShown: false }} />
-            <Stack.Screen name="verifyOtp" options={{ headerShown: false, gestureEnabled: false }} />
-            <Stack.Screen name="profileSetup" options={{ headerShown: false, gestureEnabled: false }} />
-            <Stack.Screen name="editProfile" options={{ headerShown: false }} />
-            <Stack.Screen name="changePassword" options={{ headerShown: false }} />
-          </Stack>
-        </NavigationThemeProvider>
+        <AlertProvider>
+          <CurrencyProvider>
+            <NavigationThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+              <Stack>
+                <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+                <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
+                <Stack.Screen name="notifications" options={{ title: "Notifications" }} />
+                <Stack.Screen name="settings" options={{ title: "Settings" }} />
+                <Stack.Screen name="onboarding" options={{ headerShown: false, gestureEnabled: false }} />
+                <Stack.Screen name="auth" options={{ headerShown: false, gestureEnabled: false }} />
+                <Stack.Screen name="terms" options={{ title: "Terms & Conditions" }} />
+                <Stack.Screen name="privacy" options={{ title: "Privacy Policy" }} />
+                <Stack.Screen name="documentation" options={{ title: "Documentation" }} />
+                <Stack.Screen name="forgotPassword" options={{ headerShown: false }} />
+                <Stack.Screen name="verifyOtp" options={{ headerShown: false, gestureEnabled: false }} />
+                <Stack.Screen name="profileSetup" options={{ headerShown: false, gestureEnabled: false }} />
+                <Stack.Screen name="editProfile" options={{ headerShown: false }} />
+                <Stack.Screen name="changePassword" options={{ headerShown: false }} />
+              </Stack>
+            </NavigationThemeProvider>
+          </CurrencyProvider>
+        </AlertProvider>
       </ThemeProvider>
     </GestureHandlerRootView>
   );

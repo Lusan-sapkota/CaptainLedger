@@ -15,6 +15,7 @@ import { StatusBar } from 'expo-status-bar';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useRouter } from 'expo-router';
 import { useTheme } from '@/components/ThemeProvider';
+import { useCurrency } from '@/components/CurrencyProvider';
 import { AppColors } from '@/app/(tabs)/_layout';
 import { LinearGradient } from 'expo-linear-gradient';
 
@@ -26,15 +27,23 @@ interface Account {
   bank?: string;
   accountNumber?: string;
   color: string;
+  currency?: string;
   isActive: boolean;
 }
 
 export default function AccountsScreen() {
   const { isDarkMode, colors } = useTheme();
+  const { formatCurrency, convertCurrency } = useCurrency();
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [showModal, setShowModal] = useState(false);
+  const [formattedBalances, setFormattedBalances] = useState<{[key: string]: string}>({});
+  const [formattedOverview, setFormattedOverview] = useState({
+    netWorth: '',
+    totalAssets: '',
+    totalDebt: ''
+  });
   const [accounts, setAccounts] = useState<Account[]>([
     {
       id: '1',
@@ -86,6 +95,55 @@ export default function AccountsScreen() {
     accountNumber: ''
   });
 
+  // Format currency values for all accounts and overview
+  useEffect(() => {
+    const formatAccountBalances = async () => {
+      try {
+        const formatted: {[key: string]: string} = {};
+        
+        await Promise.all(
+          accounts.map(async (account) => {
+            try {
+              formatted[account.id] = await formatCurrency(Math.abs(account.balance));
+            } catch (error) {
+              formatted[account.id] = Math.abs(account.balance).toFixed(2);
+            }
+          })
+        );
+        
+        setFormattedBalances(formatted);
+
+        // Format overview values with currency conversion
+        const totalBalance = await getTotalBalance();
+        const totalDebt = await getTotalDebt();
+        const netWorth = totalBalance - totalDebt;
+
+        try {
+          const formattedNetWorth = await formatCurrency(Math.abs(netWorth));
+          const formattedAssets = await formatCurrency(totalBalance);
+          const formattedDebt = await formatCurrency(totalDebt);
+
+          setFormattedOverview({
+            netWorth: formattedNetWorth,
+            totalAssets: formattedAssets,
+            totalDebt: formattedDebt
+          });
+        } catch (error) {
+          console.error('Error formatting overview values:', error);
+          setFormattedOverview({
+            netWorth: Math.abs(netWorth).toFixed(2),
+            totalAssets: totalBalance.toFixed(2),
+            totalDebt: totalDebt.toFixed(2)
+          });
+        }
+      } catch (error) {
+        console.error('Error formatting account balances:', error);
+      }
+    };
+    
+    formatAccountBalances();
+  }, [accounts, formatCurrency]);
+
   const accountTypes = [
     { id: 'checking', label: 'Checking', icon: 'university' },
     { id: 'savings', label: 'Savings', icon: 'piggy-bank' },
@@ -105,16 +163,42 @@ export default function AccountsScreen() {
     return typeMap[type];
   };
 
-  const getTotalBalance = () => {
-    return accounts
-      .filter(account => account.isActive && account.type !== 'credit_card')
-      .reduce((sum, account) => sum + account.balance, 0);
+  const getTotalBalance = async () => {
+    let totalBalance = 0;
+    const activeAccounts = accounts.filter(account => account.isActive && account.type !== 'credit_card');
+    
+    for (const account of activeAccounts) {
+      try {
+        const convertedBalance = account.currency ? 
+          await convertCurrency(account.balance, account.currency) : 
+          account.balance;
+        totalBalance += convertedBalance;
+      } catch (error) {
+        console.error('Error converting account balance currency:', error);
+        totalBalance += account.balance; // Fallback to original amount
+      }
+    }
+    
+    return totalBalance;
   };
 
-  const getTotalDebt = () => {
-    return Math.abs(accounts
-      .filter(account => account.isActive && account.type === 'credit_card' && account.balance < 0)
-      .reduce((sum, account) => sum + account.balance, 0));
+  const getTotalDebt = async () => {
+    let totalDebt = 0;
+    const creditCardAccounts = accounts.filter(account => account.isActive && account.type === 'credit_card' && account.balance < 0);
+    
+    for (const account of creditCardAccounts) {
+      try {
+        const convertedBalance = account.currency ? 
+          await convertCurrency(Math.abs(account.balance), account.currency) : 
+          Math.abs(account.balance);
+        totalDebt += convertedBalance;
+      } catch (error) {
+        console.error('Error converting debt currency:', error);
+        totalDebt += Math.abs(account.balance); // Fallback to original amount
+      }
+    }
+    
+    return totalDebt;
   };
 
   const handleCreateAccount = () => {
@@ -164,7 +248,65 @@ export default function AccountsScreen() {
     setTimeout(() => setRefreshing(false), 1000);
   };
 
-  const netWorth = getTotalBalance() - getTotalDebt();
+  // Calculate net worth with currency conversion
+  const [netWorth, setNetWorth] = useState(0);
+  
+  useEffect(() => {
+    const calculateNetWorth = async () => {
+      try {
+        const totalBalance = await getTotalBalance();
+        const totalDebt = await getTotalDebt();
+        setNetWorth(totalBalance - totalDebt);
+      } catch (error) {
+        console.error('Error calculating net worth:', error);
+        // Fallback calculation without conversion
+        const basicBalance = accounts
+          .filter(account => account.isActive && account.type !== 'credit_card')
+          .reduce((sum, account) => sum + account.balance, 0);
+        const basicDebt = Math.abs(accounts
+          .filter(account => account.isActive && account.type === 'credit_card' && account.balance < 0)
+          .reduce((sum, account) => sum + account.balance, 0));
+        setNetWorth(basicBalance - basicDebt);
+      }
+    };
+    
+    if (accounts.length > 0) {
+      calculateNetWorth();
+    }
+  }, [accounts]);
+
+  // Overview Card Component to avoid hooks violation
+  const OverviewCardComponent = () => {
+    return (
+      <View style={[styles.overviewCard, { backgroundColor: colors.cardBackground }]}>
+        <Text style={[styles.overviewTitle, { color: colors.text }]}>Net Worth</Text>
+        <Text style={[
+          styles.netWorthValue,
+          { color: netWorth >= 0 ? AppColors.primary : AppColors.danger }
+        ]}>
+          {netWorth >= 0 ? formattedOverview.netWorth : `-${formattedOverview.netWorth}`}
+        </Text>
+        
+        <View style={styles.overviewStats}>
+          <View style={styles.overviewStat}>
+            <FontAwesome name="arrow-up" size={16} color={AppColors.primary} />
+            <Text style={[styles.overviewStatLabel, { color: colors.subText }]}>Assets</Text>
+            <Text style={[styles.overviewStatValue, { color: AppColors.primary }]}>
+              {formattedOverview.totalAssets}
+            </Text>
+          </View>
+          
+          <View style={styles.overviewStat}>
+            <FontAwesome name="arrow-down" size={16} color={AppColors.danger} />
+            <Text style={[styles.overviewStatLabel, { color: colors.subText }]}>Debt</Text>
+            <Text style={[styles.overviewStatValue, { color: AppColors.danger }]}>
+              {formattedOverview.totalDebt}
+            </Text>
+          </View>
+        </View>
+      </View>
+    );
+  };
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -175,33 +317,7 @@ export default function AccountsScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         {/* Net Worth Overview */}
-        <View style={[styles.overviewCard, { backgroundColor: colors.cardBackground }]}>
-          <Text style={[styles.overviewTitle, { color: colors.text }]}>Net Worth</Text>
-          <Text style={[
-            styles.netWorthValue,
-            { color: netWorth >= 0 ? AppColors.primary : AppColors.danger }
-          ]}>
-            ${netWorth.toFixed(2)}
-          </Text>
-          
-          <View style={styles.overviewStats}>
-            <View style={styles.overviewStat}>
-              <FontAwesome name="arrow-up" size={16} color={AppColors.primary} />
-              <Text style={[styles.overviewStatLabel, { color: colors.subText }]}>Assets</Text>
-              <Text style={[styles.overviewStatValue, { color: AppColors.primary }]}>
-                ${getTotalBalance().toFixed(2)}
-              </Text>
-            </View>
-            
-            <View style={styles.overviewStat}>
-              <FontAwesome name="arrow-down" size={16} color={AppColors.danger} />
-              <Text style={[styles.overviewStatLabel, { color: colors.subText }]}>Debt</Text>
-              <Text style={[styles.overviewStatValue, { color: AppColors.danger }]}>
-                ${getTotalDebt().toFixed(2)}
-              </Text>
-            </View>
-          </View>
-        </View>
+        <OverviewCardComponent />
 
         {/* Account Categories */}
         {accountTypes.map((type) => {
@@ -250,7 +366,10 @@ export default function AccountsScreen() {
                         styles.accountBalance,
                         { color: account.balance >= 0 ? AppColors.primary : AppColors.danger }
                       ]}>
-                        ${Math.abs(account.balance).toFixed(2)}
+                        {account.balance >= 0 
+                          ? formattedBalances[account.id] || Math.abs(account.balance).toFixed(2)
+                          : `-${formattedBalances[account.id] || Math.abs(account.balance).toFixed(2)}`
+                        }
                       </Text>
                       
                       <View style={styles.actionButtons}>

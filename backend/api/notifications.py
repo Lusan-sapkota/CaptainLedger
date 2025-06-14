@@ -3,6 +3,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 from models.models import db, User, Notification
 from websocket.socket_server import send_notification, send_system_message
 from datetime import datetime
+import json
 
 notifications_bp = Blueprint('notifications_api', __name__)
 
@@ -26,8 +27,8 @@ def get_notifications():
                 'type': n.type,
                 'title': n.title,
                 'message': n.message,
-                'data': n.data,
-                'read': n.read,
+                'data': json.loads(n.data) if n.data else {},
+                'read': n.is_read,
                 'date': n.created_at.isoformat()
             } for n in notifications
         ]
@@ -49,8 +50,8 @@ def create_notification():
         type=data.get('type', 'system'),
         title=data.get('title', 'Notification'),
         message=data.get('message', ''),
-        data=data.get('data', {}),
-        read=False
+        data=json.dumps(data.get('data', {})),
+        is_read=False
     )
     
     db.session.add(notification)
@@ -61,9 +62,9 @@ def create_notification():
         'id': str(notification.id),
         'title': notification.title,
         'message': notification.message,
-        'data': notification.data,
+        'data': json.loads(notification.data) if notification.data else {},
         'timestamp': notification.created_at.isoformat(),
-        'read': notification.read
+        'read': notification.is_read
     })
     
     return jsonify({
@@ -85,7 +86,7 @@ def mark_notification_read(notification_id):
     if not notification:
         return jsonify({'error': 'Notification not found'}), 404
     
-    notification.read = True
+    notification.is_read = True
     db.session.commit()
     
     return jsonify({'message': 'Notification marked as read'})
@@ -99,41 +100,61 @@ def send_email_notification():
     user_id = get_jwt_identity()
     data = request.get_json()
     
-    if not data or 'type' not in data or 'data' not in data:
-        return jsonify({'error': 'Invalid request data'}), 400
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
     
     user = User.query.get(user_id)
     if not user:
         return jsonify({'error': 'User not found'}), 404
         
     try:
-        notification_type = data['type']
-        notification_data = data['data']
-        
-        if notification_type == 'weekly_report':
-            email_service.send_weekly_report(
-                user.email,
-                user.fullName,
-                notification_data.get('transactions', [])
+        # Check if this is a structured notification (with type and data)
+        if 'type' in data and 'data' in data:
+            notification_type = data['type']
+            notification_data = data['data']
+            
+            if notification_type == 'weekly_report':
+                email_service.send_weekly_report(
+                    user.email,
+                    user.fullName,
+                    notification_data.get('transactions', [])
+                )
+                
+            elif notification_type == 'monthly_report':
+                email_service.send_monthly_report(
+                    user.email,
+                    user.fullName,
+                    notification_data.get('transactions', []),
+                    notification_data.get('month', 'Monthly')
+                )
+                
+            elif notification_type == 'budget_alert':
+                # Create custom budget alert email
+                email_service.send_generic_email(
+                    user.email,
+                    'Budget Alert - CaptainLedger',
+                    f"<p>Hello {user.fullName},</p><p>{notification_data.get('message', 'You have exceeded your budget limit.')}</p><p>Best regards,<br>The CaptainLedger Team</p>"
+                )
+                
+            elif notification_type == 'loan_reminder':
+                # Create custom loan reminder email
+                email_service.send_generic_email(
+                    user.email,
+                    'Loan Payment Reminder - CaptainLedger',
+                    f"<p>Hello {user.fullName},</p><p>{notification_data.get('message', 'You have an upcoming loan payment.')}</p><p>Best regards,<br>The CaptainLedger Team</p>"
+                )
+                
+        # Check if this is a generic email (with to, subject, message)
+        elif 'to' in data and 'subject' in data and 'message' in data:
+            # Send generic email
+            email_service.send_generic_email(
+                data['to'],
+                data['subject'],
+                f"<p>Hello {user.fullName},</p><p>{data['message']}</p><p>Best regards,<br>The CaptainLedger Team</p>"
             )
             
-        elif notification_type == 'monthly_report':
-            email_service.send_monthly_report(
-                user.email,
-                user.fullName,
-                notification_data.get('transactions', []),
-                notification_data.get('month', 'Monthly')
-            )
-            
-        elif notification_type == 'budget_alert':
-            # Create custom budget alert email
-            # Implementation would depend on your email service capabilities
-            pass
-            
-        elif notification_type == 'loan_reminder':
-            # Create custom loan reminder email
-            # Implementation would depend on your email service capabilities
-            pass
+        else:
+            return jsonify({'error': 'Invalid request format. Expected either {type, data} or {to, subject, message}'}), 400
             
         return jsonify({'message': 'Email notification sent successfully'})
         

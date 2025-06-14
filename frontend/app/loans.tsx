@@ -21,6 +21,7 @@ import { StatusBar } from 'expo-status-bar';
 // Local components
 import { useAlert } from '@/components/AlertProvider';
 import { useTheme } from '@/components/ThemeProvider';
+import { useCurrency } from '@/components/CurrencyProvider';
 
 // Services & API
 import {
@@ -35,9 +36,13 @@ import { AppColors } from '@/app/(tabs)/_layout';
 export default function LoansScreen() {
   const { isDarkMode, colors } = useTheme();
   const { showAlert } = useAlert();
+  const { formatCurrency, convertCurrency } = useCurrency();
   
   // States
   const [loans, setLoans] = useState<Loan[]>([]);
+  const [formattedLoans, setFormattedLoans] = useState<(Loan & {
+    formattedAmount?: string;
+  })[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [filterStatus, setFilterStatus] = useState<'all' | 'outstanding' | 'paid'>('all');
@@ -84,6 +89,32 @@ export default function LoansScreen() {
       const response = await getLoans(params);
       if (response?.data?.loans) {
         setLoans(response.data.loans);
+        
+        // Format loans with currency conversion
+        const formatted = await Promise.all(
+          response.data.loans.map(async (loan: Loan) => {
+            try {
+              const convertedAmount = loan.currency ? 
+                await convertCurrency(loan.amount, loan.currency) : 
+                loan.amount;
+              
+              const formattedAmount = await formatCurrency(convertedAmount);
+
+              return {
+                ...loan,
+                formattedAmount
+              };
+            } catch (error) {
+              console.error('Error formatting loan currency:', error);
+              return {
+                ...loan,
+                formattedAmount: await formatCurrency(loan.amount).catch(() => loan.amount.toFixed(2))
+              };
+            }
+          })
+        );
+        
+        setFormattedLoans(formatted);
       }
     } catch (err) {
       console.error('Error loading loans:', err);
@@ -213,63 +244,174 @@ export default function LoansScreen() {
   };
 
   const renderSummaryCard = () => {
-    const outstandingLoans = loans.filter(l => l.status === 'outstanding');
-    const loansGiven = outstandingLoans.filter(l => l.loan_type === 'given');
-    const loansTaken = outstandingLoans.filter(l => l.loan_type === 'taken');
-    
-    const totalGiven = loansGiven.reduce((sum, l) => sum + l.amount, 0);
-    const totalTaken = loansTaken.reduce((sum, l) => sum + l.amount, 0);
-    const netPosition = totalGiven - totalTaken;
+    const SummaryCardComponent = () => {
+      const [formattedSummary, setFormattedSummary] = useState({
+        totalGiven: '',
+        totalTaken: '',
+        netPosition: ''
+      });
+      
+      const [summaryStats, setSummaryStats] = useState({
+        loansGivenCount: 0,
+        loansTakenCount: 0,
+        outstandingCount: 0,
+        netPositionValue: 0
+      });
 
-    return (
-      <View style={[styles.summaryCard, { backgroundColor: colors.cardBackground }]}>
-        <Text style={[styles.cardTitle, { color: colors.text }]}>Loans Overview</Text>
-        
-        <View style={[styles.summaryGrid, { backgroundColor: 'transparent' }]}>
-          <View style={[styles.summaryItem, { backgroundColor: 'transparent' }]}>
-            <Text style={[styles.summaryLabel, { color: colors.subText }]}>Loans Given</Text>
-            <Text style={[styles.summaryValue, { color: AppColors.primary }]}>
-              ${totalGiven.toFixed(2)}
-            </Text>
-            <Text style={[styles.summaryCount, { color: colors.subText }]}>
-              {loansGiven.length} loans
-            </Text>
-          </View>
+      useEffect(() => {
+        const calculateAndFormatSummary = async () => {
+          try {
+            const outstandingLoans = loans.filter(l => l.status === 'outstanding');
+            const loansGiven = outstandingLoans.filter(l => l.loan_type === 'given');
+            const loansTaken = outstandingLoans.filter(l => l.loan_type === 'taken');
+            
+            // Calculate totals with currency conversion
+            let totalGiven = 0;
+            let totalTaken = 0;
+
+            // Convert loans given to primary currency
+            for (const loan of loansGiven) {
+              try {
+                const convertedAmount = loan.currency ? 
+                  await convertCurrency(loan.amount, loan.currency) : 
+                  loan.amount;
+                totalGiven += convertedAmount;
+              } catch (error) {
+                console.error('Error converting loan given currency:', error);
+                totalGiven += loan.amount; // Fallback to original amount
+              }
+            }
+
+            // Convert loans taken to primary currency
+            for (const loan of loansTaken) {
+              try {
+                const convertedAmount = loan.currency ? 
+                  await convertCurrency(loan.amount, loan.currency) : 
+                  loan.amount;
+                totalTaken += convertedAmount;
+              } catch (error) {
+                console.error('Error converting loan taken currency:', error);
+                totalTaken += loan.amount; // Fallback to original amount
+              }
+            }
+
+            const netPosition = totalGiven - totalTaken;
+
+            // Update summary stats
+            setSummaryStats({
+              loansGivenCount: loansGiven.length,
+              loansTakenCount: loansTaken.length,
+              outstandingCount: outstandingLoans.length,
+              netPositionValue: netPosition
+            });
+
+            // Format the converted totals
+            const [formattedGiven, formattedTaken, formattedNet] = await Promise.all([
+              formatCurrency(totalGiven),
+              formatCurrency(totalTaken),
+              formatCurrency(Math.abs(netPosition))
+            ]);
+
+            setFormattedSummary({
+              totalGiven: formattedGiven,
+              totalTaken: formattedTaken,
+              netPosition: (netPosition >= 0 ? '+' : '-') + formattedNet
+            });
+          } catch (error) {
+            console.error('Error calculating loan summary:', error);
+            // Fallback to basic calculation without conversion
+            const outstandingLoans = loans.filter(l => l.status === 'outstanding');
+            const loansGiven = outstandingLoans.filter(l => l.loan_type === 'given');
+            const loansTaken = outstandingLoans.filter(l => l.loan_type === 'taken');
+            
+            const totalGiven = loansGiven.reduce((sum, l) => sum + l.amount, 0);
+            const totalTaken = loansTaken.reduce((sum, l) => sum + l.amount, 0);
+            const netPosition = totalGiven - totalTaken;
+
+            setSummaryStats({
+              loansGivenCount: loansGiven.length,
+              loansTakenCount: loansTaken.length,
+              outstandingCount: outstandingLoans.length,
+              netPositionValue: netPosition
+            });
+
+            setFormattedSummary({
+              totalGiven: totalGiven.toFixed(2),
+              totalTaken: totalTaken.toFixed(2),
+              netPosition: `${netPosition >= 0 ? '+' : ''}${netPosition.toFixed(2)}`
+            });
+          }
+        };
+
+        if (loans.length > 0) {
+          calculateAndFormatSummary();
+        } else {
+          setSummaryStats({
+            loansGivenCount: 0,
+            loansTakenCount: 0,
+            outstandingCount: 0,
+            netPositionValue: 0
+          });
+          setFormattedSummary({
+            totalGiven: '0.00',
+            totalTaken: '0.00',
+            netPosition: '0.00'
+          });
+        }
+      }, [loans, formatCurrency, convertCurrency]);
+
+      return (
+        <View style={[styles.summaryCard, { backgroundColor: colors.cardBackground }]}>
+          <Text style={[styles.cardTitle, { color: colors.text }]}>Loans Overview</Text>
           
-          <View style={[styles.summaryItem, { backgroundColor: 'transparent' }]}>
-            <Text style={[styles.summaryLabel, { color: colors.subText }]}>Loans Taken</Text>
-            <Text style={[styles.summaryValue, { color: AppColors.danger }]}>
-              ${totalTaken.toFixed(2)}
-            </Text>
-            <Text style={[styles.summaryCount, { color: colors.subText }]}>
-              {loansTaken.length} loans
-            </Text>
-          </View>
-          
-          <View style={[styles.summaryItem, { backgroundColor: 'transparent' }]}>
-            <Text style={[styles.summaryLabel, { color: colors.subText }]}>Net Position</Text>
-            <Text style={[styles.summaryValue, { 
-              color: netPosition >= 0 ? AppColors.primary : AppColors.danger 
-            }]}>
-              {netPosition >= 0 ? '+' : ''}${netPosition.toFixed(2)}
-            </Text>
-            <Text style={[styles.summaryCount, { color: colors.subText }]}>
-              {netPosition >= 0 ? 'You are owed' : 'You owe'}
-            </Text>
-          </View>
-          
-          <View style={[styles.summaryItem, { backgroundColor: 'transparent' }]}>
-            <Text style={[styles.summaryLabel, { color: colors.subText }]}>Total Loans</Text>
-            <Text style={[styles.summaryValue, { color: colors.text }]}>
-              {loans.length}
-            </Text>
-            <Text style={[styles.summaryCount, { color: colors.subText }]}>
-              {outstandingLoans.length} active
-            </Text>
+          <View style={[styles.summaryGrid, { backgroundColor: 'transparent' }]}>
+            <View style={[styles.summaryItem, { backgroundColor: 'transparent' }]}>
+              <Text style={[styles.summaryLabel, { color: colors.subText }]}>Loans Given</Text>
+              <Text style={[styles.summaryValue, { color: AppColors.primary }]}>
+                {formattedSummary.totalGiven}
+              </Text>
+              <Text style={[styles.summaryCount, { color: colors.subText }]}>
+                {summaryStats.loansGivenCount} loans
+              </Text>
+            </View>
+            
+            <View style={[styles.summaryItem, { backgroundColor: 'transparent' }]}>
+              <Text style={[styles.summaryLabel, { color: colors.subText }]}>Loans Taken</Text>
+              <Text style={[styles.summaryValue, { color: AppColors.danger }]}>
+                {formattedSummary.totalTaken}
+              </Text>
+              <Text style={[styles.summaryCount, { color: colors.subText }]}>
+                {summaryStats.loansTakenCount} loans
+              </Text>
+            </View>
+            
+            <View style={[styles.summaryItem, { backgroundColor: 'transparent' }]}>
+              <Text style={[styles.summaryLabel, { color: colors.subText }]}>Net Position</Text>
+              <Text style={[styles.summaryValue, { 
+                color: summaryStats.netPositionValue >= 0 ? AppColors.primary : AppColors.danger 
+              }]}>
+                {formattedSummary.netPosition}
+              </Text>
+              <Text style={[styles.summaryCount, { color: colors.subText }]}>
+                {summaryStats.netPositionValue >= 0 ? 'You are owed' : 'You owe'}
+              </Text>
+            </View>
+            
+            <View style={[styles.summaryItem, { backgroundColor: 'transparent' }]}>
+              <Text style={[styles.summaryLabel, { color: colors.subText }]}>Total Loans</Text>
+              <Text style={[styles.summaryValue, { color: colors.text }]}>
+                {loans.length}
+              </Text>
+              <Text style={[styles.summaryCount, { color: colors.subText }]}>
+                {summaryStats.outstandingCount} active
+              </Text>
+            </View>
           </View>
         </View>
-      </View>
-    );
+      );
+    };
+
+    return <SummaryCardComponent />;
   };
 
   const renderFilterTabs = () => (
@@ -371,7 +513,7 @@ export default function LoansScreen() {
           
           <View style={[styles.loanRight, { backgroundColor: 'transparent' }]}>
             <Text style={[styles.loanAmount, { color: colors.text }]}>
-              ${item.amount.toFixed(2)}
+              {formattedLoans.find(fl => fl.id === item.id)?.formattedAmount || item.amount.toFixed(2)}
             </Text>
             
             <View style={[styles.statusBadge, { 
@@ -658,14 +800,85 @@ export default function LoansScreen() {
         </View>
       </Modal>
 
-      {/* Date Picker */}
-      {showDatePicker && (
+      {/* Date Picker - Platform specific */}
+      {showDatePicker && Platform.OS !== 'web' && (
         <DateTimePicker
           value={new Date()}
           mode="date"
           display="default"
           onChange={handleDateChange}
         />
+      )}
+
+      {/* Web Date Picker Modal */}
+      {showDatePicker && Platform.OS === 'web' && (
+        <Modal
+          animationType="fade"
+          transparent={true}
+          visible={showDatePicker}
+          onRequestClose={() => setShowDatePicker(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={[styles.webDatePickerModal, { backgroundColor: colors.cardBackground }]}>
+              <View style={styles.datePickerHeader}>
+                <Text style={[styles.datePickerTitle, { color: colors.text }]}>
+                  Select {datePickerMode === 'date' ? 'Date' : 'Deadline'}
+                </Text>
+                <TouchableOpacity onPress={() => setShowDatePicker(false)}>
+                  <FontAwesome name="times" size={20} color={colors.text} />
+                </TouchableOpacity>
+              </View>
+              
+              <input
+                type="date"
+                value={datePickerMode === 'deadline' 
+                  ? (newLoan.deadline || new Date().toISOString().split('T')[0])
+                  : (newLoan.date || new Date().toISOString().split('T')[0])}
+                onChange={(e) => {
+                  const selectedDate = e.target.value;
+                  if (datePickerMode === 'date') {
+                    setNewLoan({...newLoan, date: selectedDate});
+                  } else {
+                    setNewLoan({...newLoan, deadline: selectedDate});
+                  }
+                }}
+                min={datePickerMode === 'deadline' ? new Date().toISOString().split('T')[0] : undefined}
+                max={datePickerMode === 'date' ? new Date().toISOString().split('T')[0] : undefined}
+                style={{
+                  width: '100%',
+                  padding: 12,
+                  fontSize: 16,
+                  borderRadius: 8,
+                  marginTop: 20,
+                  marginBottom: 20,
+                  borderColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                  borderWidth: 1,
+                  backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.8)',
+                  color: colors.text
+                }}
+              />
+              
+              <View style={styles.datePickerActions}>
+                <TouchableOpacity 
+                  style={[styles.datePickerButton, { 
+                    backgroundColor: 'transparent',
+                    borderColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'
+                  }]}
+                  onPress={() => setShowDatePicker(false)}
+                >
+                  <Text style={{ color: colors.text }}>Cancel</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  style={[styles.datePickerButton, { backgroundColor: AppColors.primary }]}
+                  onPress={() => setShowDatePicker(false)}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '600' }}>Confirm</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
       )}
     </SafeAreaView>
   );
@@ -958,5 +1171,41 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
     fontWeight: '600',
+  },
+  webDatePickerModal: {
+    width: '90%',
+    maxWidth: 400,
+    borderRadius: 15,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  datePickerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  datePickerTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  datePickerActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 20,
+  },
+  datePickerButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 5,
+    borderWidth: 1,
   },
 });

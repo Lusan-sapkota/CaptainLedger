@@ -11,6 +11,8 @@ import { useTheme } from '@/components/ThemeProvider';
 import { useFocusEffect } from '@react-navigation/native'; // Add this import
 import { eventEmitter } from '@/utils/eventEmitter';
 import SwipeableBudgetCard from '@/components/SwipeableBudgetCard';
+import { useCurrency } from '@/components/CurrencyProvider';
+import TransactionItem from '@/components/TransactionItem';
 
 const FEATURE_ITEMS = [
   { 
@@ -64,6 +66,7 @@ export default function DashboardScreen() {
   const [userProfile, setUserProfile] = useState<{email: string, displayName?: string, fullName?: string, profile_picture?: string} | null>(null);
   const [loading, setLoading] = useState(true);
   const { isDarkMode, colors } = useTheme();
+  const { formatCurrency, convertCurrency, loading: currencyLoading } = useCurrency();
   const [showPersonalWelcome, setShowPersonalWelcome] = useState(true);
   
   // Create animated values for transitions
@@ -216,6 +219,7 @@ export default function DashboardScreen() {
   const [activeInvestments, setActiveInvestments] = useState<any[]>([]);
   const [transactions, setTransactions] = useState<any[]>([]);
   const [dailyBudget, setDailyBudget] = useState<number>(0);
+  const [formattedDailyBudget, setFormattedDailyBudget] = useState<string>('');
   const [totalBalance, setTotalBalance] = useState<number>(0);
   const [monthlyStats, setMonthlyStats] = useState({
     income: 0,
@@ -225,6 +229,18 @@ export default function DashboardScreen() {
     liabilities: 0
   });
 
+  // Formatted currency states
+  const [formattedStats, setFormattedStats] = useState({
+    income: '',
+    expenses: '',
+    balance: '',
+    assets: '',
+    liabilities: ''
+  });
+
+  // Track if currency system is ready
+  const [currencyReady, setCurrencyReady] = useState(false);
+
   // Add this function to fetch real-time data
   const fetchDashboardData = useCallback(async (showLoading = false) => {
     try {
@@ -232,7 +248,7 @@ export default function DashboardScreen() {
         setLoading(true);
       }
       
-      // Fetch user profile
+      // Fetch user profile first to resolve loading email issue
       await fetchUserProfile();
       
       // Fetch transactions with latest data
@@ -284,10 +300,10 @@ export default function DashboardScreen() {
       }
       
       // Calculate monthly stats with all data
-      calculateMonthlyStats(allTransactions, allLoans, allInvestments);
+      await calculateMonthlyStats(allTransactions, allLoans, allInvestments);
       
       // Calculate daily budget
-      calculateDailyBudget(allTransactions, allLoans);
+      await calculateDailyBudget(allTransactions, allLoans);
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
     } finally {
@@ -304,10 +320,55 @@ export default function DashboardScreen() {
     }, [fetchDashboardData])
   );
 
-  // Also fetch data on component mount
+  // Also fetch data on component mount and user profile immediately
   useEffect(() => {
-    fetchDashboardData(true);
+    const initializeData = async () => {
+      await fetchUserProfile(); // Load user profile first to prevent "Loading..." email
+      await fetchDashboardData(true);
+    };
+    initializeData();
   }, []);
+
+  // Initialize currency formatting for zero values on mount
+  useEffect(() => {
+    const initializeCurrencyFormatting = async () => {
+      // Wait for currency system to be ready
+      if (currencyLoading) {
+        console.log('Currency loading, waiting...');
+        setCurrencyReady(false);
+        return;
+      }
+
+      console.log('Initializing currency formatting...');
+      
+      try {
+        const formattedZero = await formatCurrency(0);
+        console.log('Formatted zero:', formattedZero);
+
+        // Only update if we don't have real data yet
+        setFormattedStats(prev => ({
+          income: prev.income || formattedZero,
+          expenses: prev.expenses || formattedZero,
+          balance: prev.balance || formattedZero,
+          assets: prev.assets || formattedZero,
+          liabilities: prev.liabilities || formattedZero
+        }));
+
+        if (!formattedDailyBudget) {
+          setFormattedDailyBudget(formattedZero);
+        }
+        
+        setCurrencyReady(true);
+        console.log('Currency formatting initialized successfully, currencyReady set to true');
+      } catch (error) {
+        console.error('Error initializing currency formatting:', error);
+        // Keep currencyReady false to show loading
+        setCurrencyReady(false);
+      }
+    };
+
+    initializeCurrencyFormatting();
+  }, [formatCurrency, currencyLoading]);
 
   // Set up periodic refresh every 30 seconds when screen is focused
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -329,8 +390,8 @@ export default function DashboardScreen() {
     }, [fetchDashboardData])
   );
 
-  // Calculate monthly statistics
-  const calculateMonthlyStats = useCallback((transactions: any[], allLoans: any[] = [], allInvestments: any[] = []) => {
+  // Calculate monthly statistics with currency conversion
+  const calculateMonthlyStats = useCallback(async (transactions: any[], allLoans: any[] = [], allInvestments: any[] = []) => {
     const currentMonth = new Date().getMonth();
     const currentYear = new Date().getFullYear();
     
@@ -342,45 +403,121 @@ export default function DashboardScreen() {
     let income = 0;
     let expenses = 0;
     
-    monthTransactions.forEach(t => {
-      if (t.amount > 0) {
-        income += t.amount;
-      } else {
-        expenses += Math.abs(t.amount);
+    // Convert and sum transactions
+    for (const t of monthTransactions) {
+      try {
+        const convertedAmount = t.currency ? 
+          await convertCurrency(Math.abs(t.amount), t.currency) : 
+          Math.abs(t.amount);
+        
+        if (t.amount > 0) {
+          income += convertedAmount;
+        } else {
+          expenses += convertedAmount;
+        }
+      } catch (error) {
+        console.error('Error converting transaction currency:', error);
+        // Fallback to original amount
+        if (t.amount > 0) {
+          income += Math.abs(t.amount);
+        } else {
+          expenses += Math.abs(t.amount);
+        }
       }
-    });
+    }
 
-    // Calculate Assets (given loans + active investments)
-    const givenLoans = allLoans
-      .filter(loan => loan.loan_type === 'given' && loan.status === 'outstanding')
-      .reduce((sum, loan) => sum + loan.amount, 0);
+    // Calculate Assets (given loans + active investments) with currency conversion
+    let assets = 0;
+    for (const loan of allLoans.filter(loan => loan.loan_type === 'given' && loan.status === 'outstanding')) {
+      try {
+        const convertedAmount = loan.currency ? 
+          await convertCurrency(loan.amount, loan.currency) : 
+          loan.amount;
+        assets += convertedAmount;
+      } catch (error) {
+        console.error('Error converting loan currency:', error);
+        assets += loan.amount;
+      }
+    }
     
-    const totalInvestments = allInvestments
-      .filter(inv => inv.status === 'active')
-      .reduce((sum, inv) => sum + (inv.current_value || inv.initial_amount), 0);
-    
-    const assets = givenLoans + totalInvestments;
+    for (const inv of allInvestments.filter(inv => inv.status === 'active')) {
+      try {
+        const amount = inv.current_value || inv.initial_amount;
+        const convertedAmount = inv.currency ? 
+          await convertCurrency(amount, inv.currency) : 
+          amount;
+        assets += convertedAmount;
+      } catch (error) {
+        console.error('Error converting investment currency:', error);
+        assets += (inv.current_value || inv.initial_amount);
+      }
+    }
 
-    // Calculate Liabilities (taken loans + credit cards)
-    const takenLoans = allLoans
-      .filter(loan => loan.loan_type === 'taken' && loan.status === 'outstanding')
-      .reduce((sum, loan) => sum + loan.amount, 0);
+    // Calculate Liabilities (taken loans + credit cards) with currency conversion
+    let liabilities = 0;
+    for (const loan of allLoans.filter(loan => loan.loan_type === 'taken' && loan.status === 'outstanding')) {
+      try {
+        const convertedAmount = loan.currency ? 
+          await convertCurrency(loan.amount, loan.currency) : 
+          loan.amount;
+        liabilities += convertedAmount;
+      } catch (error) {
+        console.error('Error converting liability currency:', error);
+        liabilities += loan.amount;
+      }
+    }
     
-    // For now, we'll calculate liabilities as taken loans
-    // In the future, this could include credit card debts from accounts
-    const liabilities = takenLoans;
+    const balance = income - expenses;
     
+    // Update numeric stats
     setMonthlyStats({
       income,
       expenses,
-      balance: income - expenses,
+      balance,
       assets,
       liabilities
     });
-  }, []);
 
-  // Calculate daily budget
-  const calculateDailyBudget = useCallback((transactions: any[], loans: any[]) => {
+    // Format currency values
+    try {
+      const [formattedIncome, formattedExpenses, formattedBalance, formattedAssets, formattedLiabilities] = 
+        await Promise.all([
+          formatCurrency(income),
+          formatCurrency(expenses),
+          formatCurrency(balance),
+          formatCurrency(assets),
+          formatCurrency(liabilities)
+        ]);
+
+      console.log('Formatted stats:', { formattedIncome, formattedExpenses, formattedBalance });
+
+      setFormattedStats({
+        income: formattedIncome,
+        expenses: formattedExpenses,
+        balance: formattedBalance,
+        assets: formattedAssets,
+        liabilities: formattedLiabilities
+      });
+
+      // Mark currency as ready after successful formatting
+      setCurrencyReady(true);
+    } catch (error) {
+      console.error('Error formatting currencies:', error);
+      // Set fallback formatted values to avoid showing "$" 
+      setFormattedStats({
+        income: income.toFixed(2),
+        expenses: expenses.toFixed(2), 
+        balance: balance.toFixed(2),
+        assets: assets.toFixed(2),
+        liabilities: liabilities.toFixed(2)
+      });
+      // Still mark as ready so UI doesn't show "..." indefinitely
+      setCurrencyReady(true);
+    }
+  }, [convertCurrency, formatCurrency]);
+
+  // Calculate daily budget with currency conversion
+  const calculateDailyBudget = useCallback(async (transactions: any[], loans: any[]) => {
     try {
       // Get current month's income
       const currentMonth = new Date().getMonth();
@@ -389,36 +526,63 @@ export default function DashboardScreen() {
       const today = new Date().getDate();
       const remainingDays = daysInMonth - today + 1; // Including today
       
-      // Calculate monthly income
-      const monthlyIncome = transactions
-        .filter(t => {
-          const date = new Date(t.date);
-          return date.getMonth() === currentMonth && 
-                 date.getFullYear() === currentYear && 
-                 t.amount > 0;
-        })
-        .reduce((sum, t) => sum + t.amount, 0);
+      // Calculate monthly income with currency conversion
+      let monthlyIncome = 0;
+      for (const t of transactions.filter(t => {
+        const date = new Date(t.date);
+        return date.getMonth() === currentMonth && 
+               date.getFullYear() === currentYear && 
+               t.amount > 0;
+      })) {
+        try {
+          const convertedAmount = t.currency ? 
+            await convertCurrency(t.amount, t.currency) : 
+            t.amount;
+          monthlyIncome += convertedAmount;
+        } catch (error) {
+          console.error('Error converting income transaction currency:', error);
+          monthlyIncome += t.amount;
+        }
+      }
       
-      // Calculate monthly expenses
-      const monthlyExpenses = transactions
-        .filter(t => {
-          const date = new Date(t.date);
-          return date.getMonth() === currentMonth && 
-                 date.getFullYear() === currentYear && 
-                 t.amount < 0;
-        })
-        .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+      // Calculate monthly expenses with currency conversion
+      let monthlyExpenses = 0;
+      for (const t of transactions.filter(t => {
+        const date = new Date(t.date);
+        return date.getMonth() === currentMonth && 
+               date.getFullYear() === currentYear && 
+               t.amount < 0;
+      })) {
+        try {
+          const convertedAmount = t.currency ? 
+            await convertCurrency(Math.abs(t.amount), t.currency) : 
+            Math.abs(t.amount);
+          monthlyExpenses += convertedAmount;
+        } catch (error) {
+          console.error('Error converting expense transaction currency:', error);
+          monthlyExpenses += Math.abs(t.amount);
+        }
+      }
       
-      // Consider upcoming loan payments
-      const upcomingLoanPayments = loans
-        .filter(loan => {
-          const dueDate = new Date(loan.deadline);
-          return dueDate.getMonth() === currentMonth && 
-                 dueDate.getFullYear() === currentYear &&
-                 loan.status === 'outstanding' &&
-                 loan.loan_type === 'taken';
-        })
-        .reduce((sum, loan) => sum + loan.amount, 0);
+      // Consider upcoming loan payments with currency conversion
+      let upcomingLoanPayments = 0;
+      for (const loan of loans.filter(loan => {
+        const dueDate = new Date(loan.deadline);
+        return dueDate.getMonth() === currentMonth && 
+               dueDate.getFullYear() === currentYear &&
+               loan.status === 'outstanding' &&
+               loan.loan_type === 'taken';
+      })) {
+        try {
+          const convertedAmount = loan.currency ? 
+            await convertCurrency(loan.amount, loan.currency) : 
+            loan.amount;
+          upcomingLoanPayments += convertedAmount;
+        } catch (error) {
+          console.error('Error converting loan currency:', error);
+          upcomingLoanPayments += loan.amount;
+        }
+      }
       
       // Calculate remaining budget
       const remainingBudget = monthlyIncome - monthlyExpenses - upcomingLoanPayments;
@@ -426,11 +590,26 @@ export default function DashboardScreen() {
       // Daily budget is the remaining budget divided by remaining days
       const daily = remainingBudget > 0 ? remainingBudget / remainingDays : 0;
       setDailyBudget(daily);
+
+      // Format the daily budget
+      try {
+        const formatted = await formatCurrency(daily);
+        setFormattedDailyBudget(formatted);
+      } catch (error) {
+        console.error('Error formatting daily budget currency:', error);
+        setFormattedDailyBudget(daily.toFixed(2));
+      }
     } catch (error) {
       console.error('Error calculating daily budget:', error);
       setDailyBudget(0);
+      try {
+        const formattedZero = await formatCurrency(0);
+        setFormattedDailyBudget(formattedZero);
+      } catch (formatError) {
+        setFormattedDailyBudget('0.00');
+      }
     }
-  }, []);
+  }, [convertCurrency, formatCurrency]);
 
   // Update total balance including loans
   const updateTotalBalance = useCallback((transactions: any[], activeLoans: any[]) => {
@@ -587,7 +766,7 @@ export default function DashboardScreen() {
         await sendEmailNotification({
           to: userProfile?.email || '',
           subject: 'Weekly Report',
-          message: `Here is your weekly report:\n\nIncome: $${monthlyStats.income.toFixed(2)}\nExpenses: $${monthlyStats.expenses.toFixed(2)}\nTransactions: ${weekTransactions.length}`
+          message: `Here is your weekly report:\n\nIncome: ${formattedStats.income}\nExpenses: ${formattedStats.expenses}\nTransactions: ${weekTransactions.length}`
         });
       }
       
@@ -600,7 +779,7 @@ export default function DashboardScreen() {
           return txDate.getMonth() === today.getMonth() && 
                  txDate.getFullYear() === today.getFullYear();
         });
-        const reportMessage = `Here is your monthly report for ${monthName} ${year}:\n\nIncome: $${monthlyStats.income.toFixed(2)}\nExpenses: $${monthlyStats.expenses.toFixed(2)}\nBalance: $${monthlyStats.balance.toFixed(2)}\nTransactions: ${monthlyTransactions.length}`;
+        const reportMessage = `Here is your monthly report for ${monthName} ${year}:\n\nIncome: ${formattedStats.income}\nExpenses: ${formattedStats.expenses}\nBalance: ${formattedStats.balance}\nTransactions: ${monthlyTransactions.length}`;
         await sendEmailNotification({
           to: userProfile?.email || '',
           subject: `Monthly Report - ${monthName} ${year}`,
@@ -771,12 +950,16 @@ export default function DashboardScreen() {
         <View style={[styles.summaryRow, { backgroundColor: colors.cardBackground }]}>
           <View style={[styles.summaryItem, { backgroundColor: colors.cardBackground }]}>
             <Text style={[styles.summaryLabel, { color: colors.subText }]}>Income</Text>
-            <Text style={styles.summaryValuePositive}>${monthlyStats.income.toFixed(2)}</Text>
+            <Text style={styles.summaryValuePositive}>
+              {currencyReady && formattedStats.income ? formattedStats.income : '...'}
+            </Text>
           </View>
           <View style={[styles.summaryDivider, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }]} />
           <View style={[styles.summaryItem, { backgroundColor: colors.cardBackground }]}>
             <Text style={[styles.summaryLabel, { color: colors.subText }]}>Expenses</Text>
-            <Text style={styles.summaryValueNegative}>${monthlyStats.expenses.toFixed(2)}</Text>
+            <Text style={styles.summaryValueNegative}>
+              {currencyReady && formattedStats.expenses ? formattedStats.expenses : '...'}
+            </Text>
           </View>
         </View>
 
@@ -785,14 +968,14 @@ export default function DashboardScreen() {
           <View style={[styles.summaryItem, { backgroundColor: colors.cardBackground }]}>
             <Text style={[styles.summaryLabel, { color: colors.subText }]}>Assets</Text>
             <Text style={[styles.summaryValueAssets, { color: AppColors.info }]}>
-              ${monthlyStats.assets.toFixed(2)}
+              {currencyReady && formattedStats.assets ? formattedStats.assets : '...'}
             </Text>
           </View>
           <View style={[styles.summaryDivider, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }]} />
           <View style={[styles.summaryItem, { backgroundColor: colors.cardBackground }]}>
             <Text style={[styles.summaryLabel, { color: colors.subText }]}>Liabilities</Text>
             <Text style={[styles.summaryValueLiabilities, { color: AppColors.warning }]}>
-              ${monthlyStats.liabilities.toFixed(2)}
+              {currencyReady && formattedStats.liabilities ? formattedStats.liabilities : '...'}
             </Text>
           </View>
         </View>
@@ -805,7 +988,10 @@ export default function DashboardScreen() {
           <Text style={[styles.balanceValue, { 
             color: monthlyStats.balance >= 0 ? AppColors.primary : AppColors.danger 
           }]}>
-            {monthlyStats.balance >= 0 ? '+' : '-'}${Math.abs(monthlyStats.balance).toFixed(2)}
+            {currencyReady && formattedStats.balance ? 
+              `${monthlyStats.balance >= 0 ? '+' : ''}${formattedStats.balance}` : 
+              '...'
+            }
           </Text>
         </View>
       </View>
@@ -815,6 +1001,7 @@ export default function DashboardScreen() {
         colors={colors}
         isDarkMode={isDarkMode}
         onCreateBudget={handleCreateBudget}
+        currencyReady={currencyReady}
       />
       
       {/* Active Loans / Loan Timer Section - MOVED UP */}
@@ -867,16 +1054,11 @@ export default function DashboardScreen() {
           </Text>
         ) : (
           transactions.map((transaction, index) => (
-            <RecentTransactionItem 
+            <TransactionItem 
               key={transaction.id || index}
-              category={transaction.category}
-              amount={`${transaction.amount < 0 ? '-' : '+'}${transaction.currency} ${Math.abs(transaction.amount).toFixed(2)}`}
-              date={formatTransactionDate(transaction.date)}
-              title={transaction.note || transaction.category}
-              icon={getCategoryIcon(transaction.category)}
-              color={getCategoryColor(transaction.category)}
-              isDarkMode={isDarkMode}
-              colors={colors}
+              item={transaction}
+              onPress={() => {}} // Dashboard transactions are read-only
+              compact={true}
             />
           ))
         )}
@@ -910,54 +1092,54 @@ export default function DashboardScreen() {
   );
 }
 
-function RecentTransactionItem({ 
-  category, 
-  amount, 
-  date, 
-  title, 
-  icon, 
-  color,
-  isDarkMode,
-  colors 
-}: { 
-  category: string; 
-  amount: string; 
-  date: string; 
-  title: string;
-  icon: string;
-  color: string;
-  isDarkMode: boolean;
-  colors: any;
-}) {
-  return (
-    <View style={[styles.transactionItem, { backgroundColor: colors.cardBackground, borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }]}>
-      <View style={[styles.transactionLeft, { backgroundColor: colors.cardBackground }]}>
-        <View style={[styles.transactionIcon, { backgroundColor: color }]}>
-          <FontAwesome name={icon as any} size={16} color="white" />
-        </View>
-        <View style={[{ backgroundColor: 'transparent' }]}>
-          <Text style={[styles.transactionTitle, { color: colors.text }]}>{title}</Text>
-          <Text style={[styles.transactionCategory, { color: colors.subText }]}>{category}</Text>
-        </View>
-      </View>
-      <View style={[{ backgroundColor: 'transparent' }]}>
-        <Text style={[
-          amount.includes('-') ? styles.amountNegative : styles.amountPositive,
-          { backgroundColor: 'transparent' }
-        ]}>
-          {amount}
-        </Text>
-        <Text style={[styles.transactionDate, { color: colors.subText, backgroundColor: 'transparent' }]}>{date}</Text>
-      </View>
-    </View>
-  );
-}
-
 function InvestmentCard({ investment, colors, isDarkMode }: { 
   investment: any, 
   colors: any, 
   isDarkMode: boolean 
 }) {
+  const { formatCurrency, convertCurrency } = useCurrency();
+  const [formattedValues, setFormattedValues] = useState({
+    currentValue: '',
+    profitLoss: ''
+  });
+
+  useEffect(() => {
+    const formatInvestmentValues = async () => {
+      try {
+        const currentValue = investment.current_value || investment.initial_amount;
+        const profitLoss = currentValue - investment.initial_amount;
+        
+        // Convert to primary currency if needed
+        const convertedCurrent = investment.currency ? 
+          await convertCurrency(currentValue, investment.currency) : 
+          currentValue;
+        const convertedProfitLoss = investment.currency ? 
+          await convertCurrency(profitLoss, investment.currency) : 
+          profitLoss;
+
+        const [formattedCurrent, formattedPL] = await Promise.all([
+          formatCurrency(convertedCurrent),
+          formatCurrency(convertedProfitLoss)
+        ]);
+
+        setFormattedValues({
+          currentValue: formattedCurrent,
+          profitLoss: formattedPL
+        });
+      } catch (error) {
+        console.error('Error formatting investment currency:', error);
+        const currentValue = investment.current_value || investment.initial_amount;
+        const profitLoss = currentValue - investment.initial_amount;
+        setFormattedValues({
+          currentValue: `$${currentValue.toFixed(2)}`,
+          profitLoss: `${profitLoss >= 0 ? '+' : ''}$${profitLoss.toFixed(2)}`
+        });
+      }
+    };
+
+    formatInvestmentValues();
+  }, [investment, formatCurrency, convertCurrency]);
+
   const currentValue = investment.current_value || investment.initial_amount;
   const profitLoss = currentValue - investment.initial_amount;
   const profitLossPercentage = ((profitLoss / investment.initial_amount) * 100).toFixed(2);
@@ -984,7 +1166,7 @@ function InvestmentCard({ investment, colors, isDarkMode }: {
         </View>
         <View style={{ backgroundColor: 'transparent' }}>
           <Text style={[styles.loanAmount, { color: AppColors.secondary }]}>
-            {investment.currency} {currentValue.toFixed(2)}
+            {formattedValues.currentValue}
           </Text>
         </View>
       </View>
@@ -996,7 +1178,7 @@ function InvestmentCard({ investment, colors, isDarkMode }: {
             color: getPerformanceColor(),
             fontWeight: 'bold'
           }]}>
-            {profitLoss >= 0 ? '+' : ''}{profitLoss.toFixed(2)} ({profitLossPercentage}%)
+            {formattedValues.profitLoss} ({profitLossPercentage}%)
           </Text>
         </View>
         <View style={[styles.loanProgressBar, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]}>
@@ -1017,9 +1199,29 @@ function LoanTimerCard({ loan, colors, isDarkMode }: {
   colors: any, 
   isDarkMode: boolean 
 }) {
+  const { formatCurrency, convertCurrency } = useCurrency();
   const [timeRemaining, setTimeRemaining] = useState<string>('');
   const [progressWidth, setProgressWidth] = useState<`${number}%`>('0%');
+  const [formattedAmount, setFormattedAmount] = useState('');
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    const formatLoanAmount = async () => {
+      try {
+        const convertedAmount = loan.currency ? 
+          await convertCurrency(Math.abs(loan.amount), loan.currency) : 
+          Math.abs(loan.amount);
+        
+        const formatted = await formatCurrency(convertedAmount);
+        setFormattedAmount(formatted);
+      } catch (error) {
+        console.error('Error formatting loan currency:', error);
+        setFormattedAmount(`$${Math.abs(loan.amount).toFixed(2)}`);
+      }
+    };
+
+    formatLoanAmount();
+  }, [loan, formatCurrency, convertCurrency]);
   
   useEffect(() => {
     // Calculate and update remaining time
@@ -1076,7 +1278,7 @@ function LoanTimerCard({ loan, colors, isDarkMode }: {
           <Text style={[styles.loanAmount, { 
             color: loan.loan_type === 'given' ? AppColors.primary : AppColors.danger 
           }]}>
-            {loan.loan_type === 'given' ? '+' : '-'}{loan.currency} {Math.abs(loan.amount).toFixed(2)}
+            {loan.loan_type === 'given' ? '+' : '-'}{formattedAmount}
           </Text>
         </View>
       </View>

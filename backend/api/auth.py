@@ -1,13 +1,14 @@
 from flask import Blueprint, request, jsonify, current_app, make_response
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
-from models.models import db, User
+from models.models import db, User, Currency, CurrencyPreference
 import random
 import string
 from datetime import datetime, timedelta
 from utils.email import email_service
 import os
 from werkzeug.utils import secure_filename
+from utils.currency_mapping import get_country_currency_mapping
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -139,6 +140,11 @@ def verify_otp():
             gender=user_data.get('gender', '')
         )
 
+        # Get country-based currency mapping and set preferred currency
+        country_currency_map = get_country_currency_mapping()
+        default_currency = country_currency_map.get(user_data['country'], 'USD')
+        new_user.preferred_currency = default_currency
+
         # Then set the additional fields as attributes
         new_user.is_active = True
         new_user.is_verified = True
@@ -150,6 +156,36 @@ def verify_otp():
         new_user.profile_picture = ''
 
         db.session.add(new_user)
+        db.session.flush()  # Flush to get the user ID
+
+        # Create default currency preference for the user
+        try:
+            # Verify the currency exists in our database
+            currency_exists = Currency.query.filter_by(code=default_currency, is_active=True).first()
+            if currency_exists:
+                default_preference = CurrencyPreference(
+                    user_id=new_user.id,
+                    currency_code=default_currency,
+                    is_primary=True,
+                    display_order=0
+                )
+                db.session.add(default_preference)
+                print(f"✅ Set default currency {default_currency} for user from {user_data['country']}")
+            else:
+                print(f"⚠️ Currency {default_currency} not found, defaulting to USD")
+                # Fallback to USD if the mapped currency doesn't exist
+                new_user.preferred_currency = 'USD'
+                default_preference = CurrencyPreference(
+                    user_id=new_user.id,
+                    currency_code='USD',
+                    is_primary=True,
+                    display_order=0
+                )
+                db.session.add(default_preference)
+        except Exception as e:
+            print(f"Error creating currency preference: {e}")
+            # Continue without failing registration
+
         db.session.commit()
         
         # Clean up OTP
@@ -171,6 +207,7 @@ def verify_otp():
                 'full_name': new_user.fullName,
                 'country': new_user.country,
                 'gender': new_user.gender,
+                'preferred_currency': new_user.preferred_currency,
                 'profile_picture': new_user.profile_picture,
                 'last_login': new_user.last_login.isoformat() if new_user.last_login else None,
                 'created_at': new_user.created_at.isoformat() if new_user.created_at else None,

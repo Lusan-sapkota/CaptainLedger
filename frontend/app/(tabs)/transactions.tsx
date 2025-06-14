@@ -28,6 +28,8 @@ import { eventEmitter } from '@/utils/eventEmitter';
 import { Text, View } from '@/components/Themed';
 import { useAlert } from '@/components/AlertProvider';
 import { useTheme } from '@/components/ThemeProvider';
+import { useCurrency } from '@/components/CurrencyProvider';
+import TransactionItem from '@/components/TransactionItem';
 
 // Services & API
 import {
@@ -62,6 +64,7 @@ type Transaction = {
 export default function TransactionsScreen() {
   const { isDarkMode, colors } = useTheme();
   const { showAlert } = useAlert();
+  const { formatCurrency, convertCurrency, primaryCurrency } = useCurrency();
   const router = useRouter();
 
   // States
@@ -69,6 +72,16 @@ export default function TransactionsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // Formatted currency states for balance
+  const [formattedBalance, setFormattedBalance] = useState('$0.00');
+  const [formattedMonthlySummary, setFormattedMonthlySummary] = useState({
+    income: '$0.00',
+    expenses: '$0.00',
+    assets: '$0.00',
+    liabilities: '$0.00'
+  });
+  const [currencySymbol, setCurrencySymbol] = useState('$');
   
   // Modal states
   const [modalVisible, setModalVisible] = useState(false);
@@ -119,7 +132,21 @@ export default function TransactionsScreen() {
   useEffect(() => {
     loadTransactions();
     loadCategories();
-  }, []);
+    
+    // Load currency symbol
+    const loadCurrencySymbol = async () => {
+      try {
+        const primaryCurrency = await formatCurrency(0, 'USD'); // Get primary currency format
+        const symbol = primaryCurrency.replace(/[\d.,]/g, ''); // Extract symbol
+        setCurrencySymbol(symbol || '$');
+      } catch (error) {
+        console.error('Error loading currency symbol:', error);
+        setCurrencySymbol('$');
+      }
+    };
+    
+    loadCurrencySymbol();
+  }, [formatCurrency]);
   
   const loadTransactions = async (isRefreshing = false) => {
     if (isRefreshing) {
@@ -135,7 +162,11 @@ export default function TransactionsScreen() {
           .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
         
         setTransactions(sortedTransactions);
-        calculateMonthlySummary(sortedTransactions);
+        await calculateMonthlySummary(sortedTransactions);
+        
+        // Format balance with dynamic currency
+        await formatCurrencyValues(sortedTransactions);
+        
         setError(null); // Clear any previous errors
       }
     } catch (err) {
@@ -192,6 +223,18 @@ export default function TransactionsScreen() {
     }
   };
   
+  // Format currency values for display
+  const formatCurrencyValues = useCallback(async (transactions: Transaction[]) => {
+    try {
+      const balanceInfo = calculateEnhancedBalance(transactions);
+      const formattedBal = await formatCurrency(balanceInfo.totalBalance);
+      setFormattedBalance(formattedBal);
+    } catch (error) {
+      console.error('Error formatting currency values:', error);
+      setFormattedBalance(`$${calculateEnhancedBalance(transactions).totalBalance.toFixed(2)}`);
+    }
+  }, [formatCurrency]);
+  
 
   interface MonthlySummaryData {
     period: string;
@@ -201,7 +244,7 @@ export default function TransactionsScreen() {
     currency: string;
   }
 
-  const calculateMonthlySummary = (data: Transaction[]): void => {
+  const calculateMonthlySummary = async (data: Transaction[]): Promise<void> => {
     if (!data.length) return;
     
     const currentMonth = new Date().getMonth();
@@ -219,33 +262,69 @@ export default function TransactionsScreen() {
     let loanRepayments = 0;
     let investmentReturns = 0;
     
-    monthTransactions.forEach((t: Transaction) => {
-      switch (t.transaction_type) {
-        case 'loan':
-          loansReceived += t.amount;
-          income += t.amount; // Include in income for balance calculation
-          break;
-        case 'loan_repayment':
-          loanRepayments += t.amount;
-          expenses += t.amount;
-          break;
-        case 'investment':
-          investmentsMade += t.amount;
-          expenses += t.amount;
-          break;
-        case 'investment_return':
-          investmentReturns += t.amount;
-          income += t.amount;
-          break;
-        default:
-          if (t.amount > 0) {
-            income += t.amount;
-          } else {
-            expenses += Math.abs(t.amount);
-          }
-          break;
+    // Convert each transaction amount to primary currency
+    for (const t of monthTransactions) {
+      try {
+        const convertedAmount = t.currency ? 
+          await convertCurrency(Math.abs(t.amount), t.currency) : 
+          Math.abs(t.amount);
+
+        switch (t.transaction_type) {
+          case 'loan':
+            loansReceived += convertedAmount;
+            income += convertedAmount; // Include in income for balance calculation
+            break;
+          case 'loan_repayment':
+            loanRepayments += convertedAmount;
+            expenses += convertedAmount;
+            break;
+          case 'investment':
+            investmentsMade += convertedAmount;
+            expenses += convertedAmount;
+            break;
+          case 'investment_return':
+            investmentReturns += convertedAmount;
+            income += convertedAmount;
+            break;
+          default:
+            if (t.amount > 0) {
+              income += convertedAmount;
+            } else {
+              expenses += convertedAmount;
+            }
+            break;
+        }
+      } catch (error) {
+        console.error('Error converting transaction currency in monthly summary:', error);
+        // Fallback to original amount
+        const fallbackAmount = Math.abs(t.amount);
+        switch (t.transaction_type) {
+          case 'loan':
+            loansReceived += fallbackAmount;
+            income += fallbackAmount;
+            break;
+          case 'loan_repayment':
+            loanRepayments += fallbackAmount;
+            expenses += fallbackAmount;
+            break;
+          case 'investment':
+            investmentsMade += fallbackAmount;
+            expenses += fallbackAmount;
+            break;
+          case 'investment_return':
+            investmentReturns += fallbackAmount;
+            income += fallbackAmount;
+            break;
+          default:
+            if (t.amount > 0) {
+              income += fallbackAmount;
+            } else {
+              expenses += fallbackAmount;
+            }
+            break;
+        }
       }
-    });
+    }
     
     setMonthlySummary({
       period: new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
@@ -259,6 +338,31 @@ export default function TransactionsScreen() {
       loanRepayments,
       investmentReturns
     });
+    
+    // Format the monthly summary values
+    try {
+      const [formattedInc, formattedExp, formattedAss, formattedLiab] = await Promise.all([
+        formatCurrency(income),
+        formatCurrency(expenses),
+        formatCurrency(loansReceived + investmentsMade),
+        formatCurrency(loanRepayments)
+      ]);
+      
+      setFormattedMonthlySummary({
+        income: formattedInc,
+        expenses: formattedExp,
+        assets: formattedAss,
+        liabilities: formattedLiab
+      });
+    } catch (error) {
+      console.error('Error formatting monthly summary:', error);
+      setFormattedMonthlySummary({
+        income: `$${income.toFixed(2)}`,
+        expenses: `$${expenses.toFixed(2)}`,
+        assets: `$${(loansReceived + investmentsMade).toFixed(2)}`,
+        liabilities: `$${loanRepayments.toFixed(2)}`
+      });
+    }
     
     // Animate summary appearance
     if (Platform.OS === 'web') {
@@ -458,114 +562,13 @@ export default function TransactionsScreen() {
     return category?.icon || 'ellipsis-horizontal';
   };
   
-  // Update the renderTransactionItem function
+  // Use standardized TransactionItem component
   const renderTransactionItem = ({ item }: { item: Transaction }) => (
-    <TouchableOpacity 
-      style={[styles.transactionItem, { backgroundColor: colors.cardBackground }]}
-      onLongPress={() => confirmDeleteTransaction(item)}
-    >
-      <View style={[styles.transactionLeft, { backgroundColor: 'transparent' }]}>
-        <View 
-          style={[styles.categoryIcon, { backgroundColor: getTransactionTypeColor(item) }]}
-        >
-          <Ionicons 
-            name={item.transaction_type === 'loan' ? 'cash' as keyof typeof Ionicons.glyphMap :
-                  item.transaction_type === 'investment' ? 'trending-up' as keyof typeof Ionicons.glyphMap :
-                  getCategoryIcon(item.category) as keyof typeof Ionicons.glyphMap} 
-            size={20} 
-            color="white" 
-          />
-        </View>
-        <View style={[styles.transactionDetails, { backgroundColor: 'transparent' }]}>
-          <Text style={[styles.transactionCategory, { color: colors.text }]}>
-            {getTransactionTypeLabel(item)}
-          </Text>
-          <Text style={[styles.transactionNote, { color: colors.text }]}>
-            {item.note || 'No description'}
-          </Text>
-          
-          {/* Enhanced details for loans and investments */}
-          {item.transaction_type === 'loan' && (
-            <View style={{ backgroundColor: 'transparent' }}>
-              <Text style={[styles.transactionDate, { color: colors.text }]}>
-                {new Date(item.date).toLocaleDateString()}
-                {item.deadline && ` • Due: ${new Date(item.deadline).toLocaleDateString()}`}
-              </Text>
-              {item.interest_rate && (
-                <Text style={[styles.detailText, { color: '#FF9800' }]}>
-                  Interest: {item.interest_rate}% • {item.lender_name || 'Unknown lender'}
-                </Text>
-              )}
-            </View>
-          )}
-          
-          {item.transaction_type === 'investment' && (
-            <View style={{ backgroundColor: 'transparent' }}>
-              <Text style={[styles.transactionDate, { color: colors.text }]}>
-                {new Date(item.date).toLocaleDateString()}
-              </Text>
-              {item.roi_percentage && (
-                <Text style={[styles.detailText, { color: '#FF9800' }]}>
-                  Expected ROI: {item.roi_percentage}% • {item.investment_platform || 'Platform not specified'}
-                </Text>
-              )}
-            </View>
-          )}
-          
-          {(!item.transaction_type || item.transaction_type === 'regular') && (
-            <Text style={[styles.transactionDate, { color: colors.text }]}>
-              {new Date(item.date).toLocaleDateString()}
-            </Text>
-          )}
-          
-          {/* Show deadline for regular loans */}
-          {item.category === 'Loan' && item.deadline && !item.transaction_type && (
-            <Text style={[styles.deadlineText, { color: isDeadlineSoon(item.deadline) ? AppColors.danger : '#FF9800' }]}>
-              Due: {new Date(item.deadline).toLocaleDateString()}
-            </Text>
-          )}
-        </View>
-      </View>
-      <View style={{ flexDirection: 'column', alignItems: 'flex-end', backgroundColor: 'transparent' }}>
-        <Text 
-          style={[
-            styles.transactionAmount,
-            { color: getTransactionTypeColor(item), backgroundColor: 'transparent' }
-          ]}
-        >
-          {item.amount < 0 ? '-' : '+'}{item.currency} {Math.abs(item.amount).toFixed(2)}
-        </Text>
-        
-        {/* Show status for loans and investments */}
-        {(item.transaction_type === 'loan' || item.transaction_type === 'investment') && (
-          <Text style={[styles.statusText, { 
-            color: item.status === 'active' ? '#FF9800' : 
-                   item.status === 'repaid' ? AppColors.primary : 
-                   item.status === 'matured' ? AppColors.primary : colors.subText,
-            backgroundColor: 'transparent'
-          }]}>
-            {item.status?.toUpperCase() || 'ACTIVE'}
-          </Text>
-        )}
-        
-        {/* Action buttons row */}
-        <View style={[styles.actionButtonsRow, { backgroundColor: 'transparent' }]}>
-          <TouchableOpacity 
-            style={[styles.actionIconButton, { backgroundColor: 'transparent' }]}
-            onPress={() => handleEditTransaction(item)}
-          >
-            <FontAwesome name="pencil" size={16} color={AppColors.primary} />
-          </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={[styles.actionIconButton, { marginLeft: 10, backgroundColor: 'transparent' }]}
-            onPress={() => confirmDeleteTransaction(item)}
-          >
-            <FontAwesome name="trash-o" size={16} color={AppColors.danger} />
-          </TouchableOpacity>
-        </View>
-      </View>
-    </TouchableOpacity>
+    <TransactionItem 
+      item={item}
+      onPress={() => confirmDeleteTransaction(item)}
+      showDate={true}
+    />
   );
 
   // Add this helper function to check if the deadline is approaching soon (within 7 days)
@@ -625,13 +628,24 @@ export default function TransactionsScreen() {
         return;
       }
       
-      // Format the data for CSV
+      // Format the data for CSV with dynamic currency
       const csvHeader = 'Date,Category,Amount,Currency,Note\n';
-      const csvContent = transactions.map(t => {
-        return `"${t.date}","${t.category}","${t.amount}","${t.currency}","${t.note || ''}"`;
-      }).join('\n');
       
-      const csvString = csvHeader + csvContent;
+      // Format transaction amounts with dynamic currency
+      const csvContent = await Promise.all(
+        transactions.map(async (t) => {
+          try {
+            const formattedAmount = await formatCurrency(Math.abs(t.amount));
+            const sign = t.amount < 0 ? '-' : '+';
+            return `"${t.date}","${t.category}","${sign}${formattedAmount}","${primaryCurrency}","${t.note || ''}"`;
+          } catch (error) {
+            // Fallback formatting
+            return `"${t.date}","${t.category}","${t.amount}","${t.currency}","${t.note || ''}"`;
+          }
+        })
+      );
+      
+      const csvString = csvHeader + csvContent.join('\n');
       const fileName = `transactions_${new Date().toISOString().split('T')[0]}.csv`;
       
       if (Platform.OS === 'web') {
@@ -669,7 +683,7 @@ export default function TransactionsScreen() {
           return;
         }
         
-        // Build HTML content
+        // Build HTML content with dynamic currency
         let htmlContent = `
           <html>
           <head>
@@ -688,6 +702,7 @@ export default function TransactionsScreen() {
           <body>
             <h1>Transactions Report</h1>
             <p>Generated on ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</p>
+            <p>Currency: ${primaryCurrency}</p>
             <table>
               <thead>
                 <tr>
@@ -700,21 +715,34 @@ export default function TransactionsScreen() {
               <tbody>
         `;
         
-        // Add transaction rows
-        transactions.forEach(t => {
+        // Add transaction rows with dynamic currency formatting
+        for (const t of transactions) {
           const dateStr = new Date(t.date).toLocaleDateString();
           const amountClass = t.amount < 0 ? 'expense' : 'income';
-          const amountStr = t.amount < 0 ? '-' : '+';
+          const sign = t.amount < 0 ? '-' : '+';
           
-          htmlContent += `
-            <tr>
-              <td>${dateStr}</td>
-              <td>${t.category}</td>
-              <td>${t.note || ''}</td>
-              <td class="${amountClass}">${amountStr}${t.currency} ${Math.abs(t.amount).toFixed(2)}</td>
-            </tr>
-          `;
-        });
+          try {
+            const formattedAmount = await formatCurrency(Math.abs(t.amount));
+            htmlContent += `
+              <tr>
+                <td>${dateStr}</td>
+                <td>${t.category}</td>
+                <td>${t.note || ''}</td>
+                <td class="${amountClass}">${sign}${formattedAmount}</td>
+              </tr>
+            `;
+          } catch (error) {
+            // Fallback formatting
+            htmlContent += `
+              <tr>
+                <td>${dateStr}</td>
+                <td>${t.category}</td>
+                <td>${t.note || ''}</td>
+                <td class="${amountClass}">${sign}${t.currency} ${Math.abs(t.amount).toFixed(2)}</td>
+              </tr>
+            `;
+          }
+        }
         
         htmlContent += `
               </tbody>
@@ -877,7 +905,7 @@ export default function TransactionsScreen() {
               backgroundColor: 'transparent' 
             }
           ]}>
-            {balance >= 0 ? '+' : ''}{transactions[0]?.currency || 'USD'} {Math.abs(balance).toFixed(2)}
+            {formattedBalance}
           </Text>
         </View>
         
@@ -904,7 +932,7 @@ export default function TransactionsScreen() {
               <View style={[styles.summaryItem, { backgroundColor: 'transparent' }]}>
                 <Text style={[styles.summaryLabel, { backgroundColor: 'transparent' }]}>Income</Text>
                 <Text style={[styles.summaryValue, { color: '#4ade80', backgroundColor: 'transparent' }]}>
-                  +{monthlySummary.currency} {monthlySummary.income.toFixed(2)}
+                  +{formattedMonthlySummary.income}
                 </Text>
               </View>
               
@@ -913,7 +941,7 @@ export default function TransactionsScreen() {
               <View style={[styles.summaryItem, { backgroundColor: 'transparent' }]}>
                 <Text style={[styles.summaryLabel, { backgroundColor: 'transparent' }]}>Expenses</Text>
                 <Text style={[styles.summaryValue, { color: '#f87171', backgroundColor: 'transparent' }]}>
-                  -{monthlySummary.currency} {monthlySummary.expenses.toFixed(2)}
+                  -{formattedMonthlySummary.expenses}
                 </Text>
               </View>
             </View>
@@ -923,7 +951,7 @@ export default function TransactionsScreen() {
               <View style={[styles.summaryItem, { backgroundColor: 'transparent' }]}>
                 <Text style={[styles.summaryLabel, { backgroundColor: 'transparent' }]}>Assets</Text>
                 <Text style={[styles.summaryValue, { color: AppColors.info, backgroundColor: 'transparent' }]}>
-                  +{monthlySummary.currency} {(monthlySummary.loansReceived + monthlySummary.investmentsMade).toFixed(2)}
+                  +{formattedMonthlySummary.assets}
                 </Text>
               </View>
               
@@ -932,7 +960,7 @@ export default function TransactionsScreen() {
               <View style={[styles.summaryItem, { backgroundColor: 'transparent' }]}>
                 <Text style={[styles.summaryLabel, { backgroundColor: 'transparent' }]}>Liabilities</Text>
                 <Text style={[styles.summaryValue, { color: AppColors.warning, backgroundColor: 'transparent' }]}>
-                  -{monthlySummary.currency} {monthlySummary.loanRepayments.toFixed(2)}
+                  -{formattedMonthlySummary.liabilities}
                 </Text>
               </View>
             </View>
@@ -1081,7 +1109,7 @@ export default function TransactionsScreen() {
                   styles.modernCurrencySymbol,
                   { color: newTransaction.isIncome ? AppColors.primary : AppColors.danger }
                 ]}>
-                  $
+                  {currencySymbol}
                 </Text>
                 <TextInput
                   style={[
@@ -1269,13 +1297,13 @@ export default function TransactionsScreen() {
                         return (
                           <>
                             <Text style={[styles.calculationText, { color: colors.text }]}>
-                              Monthly Payment: ${monthlyPayment.toFixed(2)}
+                              Monthly Payment: {currencySymbol}{monthlyPayment.toFixed(2)}
                             </Text>
                             <Text style={[styles.calculationText, { color: colors.text }]}>
-                              Total Repayment: ${totalRepayment.toFixed(2)}
+                              Total Repayment: {currencySymbol}{totalRepayment.toFixed(2)}
                             </Text>
                             <Text style={[styles.calculationText, { color: colors.text }]}>
-                              Total Interest: ${(totalRepayment - parseFloat(newTransaction.amount)).toFixed(2)}
+                              Total Interest: {currencySymbol}{(totalRepayment - parseFloat(newTransaction.amount)).toFixed(2)}
                             </Text>
                           </>
                         );
@@ -1331,7 +1359,7 @@ export default function TransactionsScreen() {
                     }]}>
                       <Text style={[styles.calculationTitle, { color: '#FF9800' }]}>Investment Projection</Text>
                       <Text style={[styles.calculationText, { color: colors.text }]}>
-                        Estimated Annual Return: ${calculateInvestmentReturn(
+                        Estimated Annual Return: {currencySymbol}{calculateInvestmentReturn(
                           parseFloat(newTransaction.amount), 
                           parseFloat(newTransaction.roi_percentage)
                         ).toFixed(2)}

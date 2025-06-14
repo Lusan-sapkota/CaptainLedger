@@ -99,6 +99,14 @@ class Transaction(db.Model):
     loan_id = db.Column(db.String(36), db.ForeignKey('loans.id'))
     investment_id = db.Column(db.String(36), db.ForeignKey('investments.id'))
     budget_id = db.Column(db.String(36), db.ForeignKey('budgets.id'))
+    
+    # Additional fields for loans and investments
+    interest_rate = db.Column(db.Float)  # For loan transactions
+    roi_percentage = db.Column(db.Float)  # For investment transactions
+    lender_name = db.Column(db.String(100))  # For loan transactions
+    investment_platform = db.Column(db.String(100))  # For investment transactions
+    deadline = db.Column(db.Date)  # Deadline for loans/investments
+    linked_transaction_id = db.Column(db.String(36))  # For linking related transactions
 
 class Budget(db.Model):
     __tablename__ = 'budgets'

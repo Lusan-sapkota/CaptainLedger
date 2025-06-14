@@ -6,6 +6,8 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { getTransactions, Transaction } from '@/services/api';
 import { AppColors } from './_layout';
 import { useTheme } from '@/components/ThemeProvider';
+import { useCurrency } from '@/components/CurrencyProvider';
+import TransactionItem from '@/components/TransactionItem';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { useAlert } from '@/components/AlertProvider';
@@ -42,6 +44,7 @@ export default function HistoryScreen() {
   const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const { isDarkMode, colors } = useTheme();
   const { showAlert } = useAlert();
+  const { primaryCurrency, formatCurrency, convertCurrency } = useCurrency();
   
   // Date range - default to current month
   const startOfMonth = new Date();
@@ -56,41 +59,121 @@ export default function HistoryScreen() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [datePickerMode, setDatePickerMode] = useState<'start' | 'end'>('start');
 
-  // Calculate filter statistics
-  const filterStats = useMemo(() => {
-    const totalIncome = transactions.reduce((sum, t) => t.amount > 0 ? sum + t.amount : sum, 0);
-    const totalExpense = transactions.reduce((sum, t) => t.amount < 0 ? sum + Math.abs(t.amount) : sum, 0);
-    const netBalance = totalIncome - totalExpense;
-    const transactionCount = transactions.length;
-    
-    // Calculate investment and loan totals
-    const investmentsMade = transactions
-      .filter(t => t.transaction_type === 'investment')
-      .reduce((sum, t) => sum + Math.abs(t.amount), 0);
-    
-    const loansGiven = transactions
-      .filter(t => t.transaction_type === 'loan')
-      .reduce((sum, t) => sum + t.amount, 0);
-    
-    const loanRepayments = transactions
-      .filter(t => t.transaction_type === 'loan_repayment')
-      .reduce((sum, t) => sum + Math.abs(t.amount), 0);
-    
-    // Assets = investments made + loans given
-    const assets = investmentsMade + loansGiven;
-    
-    // Liabilities = loan repayments (money owed/paid back)
-    const liabilities = loanRepayments;
-    
-    return {
-      totalIncome,
-      totalExpense,
-      netBalance,
-      transactionCount,
-      assets,
-      liabilities
+  // Calculate filter statistics with currency conversion
+  const [filterStats, setFilterStats] = useState({
+    totalIncome: 0,
+    totalExpense: 0,
+    netBalance: 0,
+    transactionCount: 0,
+    assets: 0,
+    liabilities: 0
+  });
+
+  // Update filter statistics whenever transactions change
+  useEffect(() => {
+    const calculateFilterStats = async () => {
+      if (transactions.length === 0) {
+        setFilterStats({
+          totalIncome: 0,
+          totalExpense: 0,
+          netBalance: 0,
+          transactionCount: 0,
+          assets: 0,
+          liabilities: 0
+        });
+        return;
+      }
+
+      try {
+        let totalIncome = 0;
+        let totalExpense = 0;
+        let investmentsMade = 0;
+        let loansGiven = 0;
+        let loanRepayments = 0;
+
+        // Convert each transaction amount to primary currency
+        for (const t of transactions) {
+          try {
+            const convertedAmount = t.currency ? 
+              await convertCurrency(Math.abs(t.amount), t.currency) : 
+              Math.abs(t.amount);
+
+            if (t.amount > 0) {
+              totalIncome += convertedAmount;
+            } else {
+              totalExpense += convertedAmount;
+            }
+
+            // Calculate investment and loan totals with conversion
+            if (t.transaction_type === 'investment') {
+              investmentsMade += convertedAmount;
+            } else if (t.transaction_type === 'loan') {
+              if (t.amount > 0) {
+                loansGiven += convertedAmount;
+              }
+            } else if (t.transaction_type === 'loan_repayment') {
+              loanRepayments += convertedAmount;
+            }
+          } catch (error) {
+            console.error('Error converting transaction currency in filterStats:', error);
+            // Fallback to original amount
+            const fallbackAmount = Math.abs(t.amount);
+            if (t.amount > 0) {
+              totalIncome += fallbackAmount;
+            } else {
+              totalExpense += fallbackAmount;
+            }
+
+            if (t.transaction_type === 'investment') {
+              investmentsMade += fallbackAmount;
+            } else if (t.transaction_type === 'loan' && t.amount > 0) {
+              loansGiven += fallbackAmount;
+            } else if (t.transaction_type === 'loan_repayment') {
+              loanRepayments += fallbackAmount;
+            }
+          }
+        }
+
+        const netBalance = totalIncome - totalExpense;
+        const assets = investmentsMade + loansGiven;
+        const liabilities = loanRepayments;
+
+        setFilterStats({
+          totalIncome,
+          totalExpense,
+          netBalance,
+          transactionCount: transactions.length,
+          assets,
+          liabilities
+        });
+      } catch (error) {
+        console.error('Error calculating filter statistics:', error);
+        // Fallback to basic calculation without conversion
+        const totalIncome = transactions.reduce((sum, t) => t.amount > 0 ? sum + t.amount : sum, 0);
+        const totalExpense = transactions.reduce((sum, t) => t.amount < 0 ? sum + Math.abs(t.amount) : sum, 0);
+        const investmentsMade = transactions
+          .filter(t => t.transaction_type === 'investment')
+          .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+        const loansGiven = transactions
+          .filter(t => t.transaction_type === 'loan')
+          .reduce((sum, t) => sum + t.amount, 0);
+        const loanRepayments = transactions
+          .filter(t => t.transaction_type === 'loan_repayment')
+          .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+
+        setFilterStats({
+          totalIncome,
+          totalExpense,
+          netBalance: totalIncome - totalExpense,
+          transactionCount: transactions.length,
+          assets: investmentsMade + loansGiven,
+          liabilities: loanRepayments
+        });
+      }
     };
-  }, [transactions]);
+
+    calculateFilterStats();
+  }, [transactions, convertCurrency]);
   
   // Optimized load transactions with better error handling and caching
   const loadTransactions = useCallback(async (isRefreshing = false) => {
@@ -210,17 +293,28 @@ export default function HistoryScreen() {
       });
   }, [transactions]);
 
-  // Export functions
+  // Export functions with dynamic currency
   const exportToCSV = async () => {
     try {
       setExportLoading(true);
       
       const csvHeader = 'Date,Category,Amount,Currency,Note\n';
-      const csvContent = transactions.map(t => {
-        return `"${t.date}","${t.category}","${t.amount.toFixed(2)}","${t.currency}","${t.note || ''}"`;
-      }).join('\n');
       
-      const csvString = csvHeader + csvContent;
+      // Format transaction amounts with dynamic currency
+      const csvContent = await Promise.all(
+        transactions.map(async (t) => {
+          try {
+            const formattedAmount = await formatCurrency(Math.abs(t.amount));
+            const sign = t.amount < 0 ? '-' : '+';
+            return `"${t.date}","${t.category}","${sign}${formattedAmount}","${primaryCurrency}","${t.note || ''}"`;
+          } catch (error) {
+            // Fallback formatting
+            return `"${t.date}","${t.category}","${t.amount.toFixed(2)}","${t.currency}","${t.note || ''}"`;
+          }
+        })
+      );
+      
+      const csvString = csvHeader + csvContent.join('\n');
       const fileName = `transaction_history_${dateRange.startDate}_to_${dateRange.endDate}.csv`;
       
       if (Platform.OS === 'web') {
@@ -248,42 +342,95 @@ export default function HistoryScreen() {
     try {
       setExportLoading(true);
       
-      // Generate HTML content for PDF
-      const groupedHTML = groupedTransactions.map(group => {
-        const transactionsHTML = group.data.map(t => `
-          <tr>
-            <td>${new Date(t.date).toLocaleDateString()}</td>
-            <td>${t.category}</td>
-            <td style="color: ${t.amount < 0 ? AppColors.danger : AppColors.primary}">
-              ${t.amount < 0 ? '-' : '+'}${t.currency} ${Math.abs(t.amount).toFixed(2)}
-            </td>
-            <td>${t.note}</td>
-          </tr>
-        `).join('');
-        
-        return `
-          <div class="month-section">
-            <h3>${group.title}</h3>
-            <div class="month-summary">
-              <p>Income: <span class="income">${group.totalIncome.toFixed(2)}</span></p>
-              <p>Expenses: <span class="expense">${group.totalExpense.toFixed(2)}</span></p>
-            </div>
-            <table>
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Category</th>
-                  <th>Amount</th>
-                  <th>Note</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${transactionsHTML}
-              </tbody>
-            </table>
-          </div>
-        `;
-      }).join('');
+      // Generate HTML content for PDF with dynamic currency
+      const groupedHTML = await Promise.all(
+        groupedTransactions.map(async (group) => {
+          const transactionsHTML = await Promise.all(
+            group.data.map(async (t) => {
+              try {
+                const formattedAmount = await formatCurrency(Math.abs(t.amount));
+                const sign = t.amount < 0 ? '-' : '+';
+                return `
+                  <tr>
+                    <td>${new Date(t.date).toLocaleDateString()}</td>
+                    <td>${t.category}</td>
+                    <td style="color: ${t.amount < 0 ? AppColors.danger : AppColors.primary}">
+                      ${sign}${formattedAmount}
+                    </td>
+                    <td>${t.note}</td>
+                  </tr>
+                `;
+              } catch (error) {
+                // Fallback formatting
+                return `
+                  <tr>
+                    <td>${new Date(t.date).toLocaleDateString()}</td>
+                    <td>${t.category}</td>
+                    <td style="color: ${t.amount < 0 ? AppColors.danger : AppColors.primary}">
+                      ${t.amount < 0 ? '-' : '+'}${t.currency} ${Math.abs(t.amount).toFixed(2)}
+                    </td>
+                    <td>${t.note}</td>
+                  </tr>
+                `;
+              }
+            })
+          );
+
+          try {
+            const [formattedIncome, formattedExpense] = await Promise.all([
+              formatCurrency(group.totalIncome),
+              formatCurrency(group.totalExpense)
+            ]);
+
+            return `
+              <div class="month-section">
+                <h3>${group.title}</h3>
+                <div class="month-summary">
+                  <p>Income: <span class="income">${formattedIncome}</span></p>
+                  <p>Expenses: <span class="expense">${formattedExpense}</span></p>
+                </div>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Category</th>
+                      <th>Amount</th>
+                      <th>Note</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${transactionsHTML.join('')}
+                  </tbody>
+                </table>
+              </div>
+            `;
+          } catch (error) {
+            // Fallback formatting
+            return `
+              <div class="month-section">
+                <h3>${group.title}</h3>
+                <div class="month-summary">
+                  <p>Income: <span class="income">${group.totalIncome.toFixed(2)}</span></p>
+                  <p>Expenses: <span class="expense">${group.totalExpense.toFixed(2)}</span></p>
+                </div>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Category</th>
+                      <th>Amount</th>
+                      <th>Note</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${transactionsHTML.join('')}
+                  </tbody>
+                </table>
+              </div>
+            `;
+          }
+        })
+      );
       
       const html = `
         <html>
@@ -304,7 +451,8 @@ export default function HistoryScreen() {
           <body>
             <h1>Transaction History</h1>
             <p>Period: ${dateRange.startDate} to ${dateRange.endDate}</p>
-            ${groupedHTML}
+            <p>Currency: ${primaryCurrency}</p>
+            ${groupedHTML.join('')}
           </body>
         </html>
       `;
@@ -427,70 +575,19 @@ export default function HistoryScreen() {
   );
   
   // Enhanced transaction item with better performance
-  const renderTransactionItem = useCallback(({ item }: { item: Transaction }) => {
-    const date = new Date(item.date);
-    const formattedDate = date.toLocaleDateString('en-US', {
-      day: 'numeric',
-      month: 'short',
-    });
-    
-    return (
-      <View style={[styles.transactionItem, { backgroundColor: colors.cardBackground }]}>
-        <View style={[
-          styles.transactionIconContainer,
-          { backgroundColor: item.amount > 0 ? AppColors.primary + '15' : AppColors.danger + '15' }
-        ]}>
-          <FontAwesome 
-            name={item.amount > 0 ? 'arrow-down' : 'arrow-up'} 
-            size={16} 
-            color={item.amount > 0 ? AppColors.primary : AppColors.danger} 
-          />
-        </View>
-        
-        <View style={styles.transactionDetails}>
-          <Text style={[styles.transactionNote, { color: colors.text }]} numberOfLines={1}>
-            {item.note || item.category}
-          </Text>
-          <Text style={[styles.transactionCategory, { color: colors.subText }]}>
-            {formattedDate} • {item.category}
-          </Text>
-        </View>
-        
-        <View style={styles.transactionAmountContainer}>
-          <Text style={[
-            styles.transactionAmount,
-            { color: item.amount < 0 ? AppColors.danger : AppColors.primary }
-          ]}>
-            {item.amount < 0 ? '-' : '+'}{item.currency} {Math.abs(item.amount).toFixed(2)}
-          </Text>
-        </View>
-      </View>
-    );
-  }, [colors]);
+  const renderTransactionItem = useCallback(({ item }: { item: Transaction }) => (
+    <TransactionItem item={item} />
+  ), []);
   
-  // Enhanced section header
+  // Enhanced section header with dynamic currency
   const renderSectionHeader = useCallback(({ section }: { section: { title: string, totalIncome: number, totalExpense: number } }) => (
-    <View style={[styles.sectionHeader, { backgroundColor: isDarkMode ? colors.cardBackground : AppColors.secondary }]}>
-      <Text style={[styles.sectionTitle, { color: isDarkMode ? colors.text : 'white' }]}>
-        {section.title}
-      </Text>
-      
-      <View style={styles.sectionSummary}>
-        <View style={styles.summaryItem}>
-          <FontAwesome name="arrow-up" size={12} color={AppColors.primary} />
-          <Text style={[styles.summaryText, { color: AppColors.primary }]}>
-            ${section.totalIncome.toFixed(2)}
-          </Text>
-        </View>
-        <View style={styles.summaryItem}>
-          <FontAwesome name="arrow-down" size={12} color={AppColors.danger} />
-          <Text style={[styles.summaryText, { color: AppColors.danger }]}>
-            ${section.totalExpense.toFixed(2)}
-          </Text>
-        </View>
-      </View>
-    </View>
-  ), [colors, isDarkMode]);
+    <SectionHeaderComponent 
+      section={section} 
+      colors={colors} 
+      isDarkMode={isDarkMode} 
+      formatCurrency={formatCurrency}
+    />
+  ), [colors, isDarkMode, formatCurrency]);
 
   // Enhanced filter statistics component
   // (removed duplicate renderFilterStats definition)
@@ -553,69 +650,166 @@ export default function HistoryScreen() {
     </View>
   );
 
-  function renderFilterStats(): import("react").ReactNode {
-    return (
-      <View style={[styles.statsContainer, { backgroundColor: colors.cardBackground }]}>
-        <View style={styles.statsGrid}>
-          <View style={styles.statItem}>
-            <View style={[styles.statIcon, { backgroundColor: AppColors.primary + '22' }]}>
-              <FontAwesome name="arrow-up" size={20} color={AppColors.primary} />
-            </View>
-            <Text style={[styles.statLabel, { color: colors.subText }]}>Income</Text>
-            <Text style={[styles.statValue, { color: AppColors.primary }]}>
-              +{filterStats.totalIncome.toFixed(2)}
-            </Text>
-          </View>
-          <View style={styles.statItem}>
-            <View style={[styles.statIcon, { backgroundColor: AppColors.danger + '22' }]}>
-              <FontAwesome name="arrow-down" size={20} color={AppColors.danger} />
-            </View>
-            <Text style={[styles.statLabel, { color: colors.subText }]}>Expenses</Text>
-            <Text style={[styles.statValue, { color: AppColors.danger }]}>
-              -{filterStats.totalExpense.toFixed(2)}
-            </Text>
-          </View>
-          <View style={styles.statItem}>
-            <View style={[styles.statIcon, { backgroundColor: AppColors.secondary + '22' }]}>
-              <FontAwesome name="line-chart" size={20} color={AppColors.secondary} />
-            </View>
-            <Text style={[styles.statLabel, { color: colors.subText }]}>Assets</Text>
-            <Text style={[styles.statValue, { color: AppColors.info }]}>
-              +{filterStats.assets.toFixed(2)}
-            </Text>
-          </View>
-          <View style={styles.statItem}>
-            <View style={[styles.statIcon, { backgroundColor: '#FF9800' + '22' }]}>
-              <FontAwesome name="credit-card" size={20} color="#FF9800" />
-            </View>
-            <Text style={[styles.statLabel, { color: colors.subText }]}>Liabilities</Text>
-            <Text style={[styles.statValue, { color: AppColors.warning }]}>
-              -{filterStats.liabilities.toFixed(2)}
-            </Text>
-          </View>
-          <View style={styles.statItem}>
-            <View style={[styles.statIcon, { backgroundColor: AppColors.secondary + '22' }]}>
-              <FontAwesome name="balance-scale" size={20} color={AppColors.secondary} />
-            </View>
-            <Text style={[styles.statLabel, { color: colors.subText }]}>Net</Text>
-            <Text style={[styles.statValue, { color: filterStats.netBalance >= 0 ? AppColors.primary : AppColors.danger }]}>
-              {filterStats.netBalance >= 0 ? '+' : '-'}
-              {Math.abs(filterStats.netBalance).toFixed(2)}
-            </Text>
-          </View>
-          <View style={styles.statItem}>
-            <View style={[styles.statIcon, { backgroundColor: colors.inputBackground }]}>
-              <FontAwesome name="list" size={20} color={colors.text} />
-            </View>
-            <Text style={[styles.statLabel, { color: colors.subText }]}>Transactions</Text>
-            <Text style={[styles.statValue, { color: colors.text }]}>
-              {filterStats.transactionCount}
-            </Text>
-          </View>
+// Section Header Component with Currency Conversion
+const SectionHeaderComponent = ({ section, colors, isDarkMode, formatCurrency }: { 
+  section: { title: string, totalIncome: number, totalExpense: number }, 
+  colors: any, 
+  isDarkMode: boolean,
+  formatCurrency: (amount: number) => Promise<string>
+}) => {
+  const [formattedIncome, setFormattedIncome] = useState(`${section.totalIncome.toFixed(2)}`);
+  const [formattedExpense, setFormattedExpense] = useState(`${section.totalExpense.toFixed(2)}`);
+
+  // Format currency values when section data changes
+  useEffect(() => {
+    const formatValues = async () => {
+      try {
+        const [incomeFormatted, expenseFormatted] = await Promise.all([
+          formatCurrency(section.totalIncome),
+          formatCurrency(section.totalExpense)
+        ]);
+        setFormattedIncome(incomeFormatted);
+        setFormattedExpense(expenseFormatted);
+      } catch (error) {
+        // Fallback to basic formatting
+        setFormattedIncome(`${section.totalIncome.toFixed(2)}`);
+        setFormattedExpense(`${section.totalExpense.toFixed(2)}`);
+      }
+    };
+    formatValues();
+  }, [section.totalIncome, section.totalExpense, formatCurrency]);
+
+  return (
+    <View style={[styles.sectionHeader, { backgroundColor: isDarkMode ? colors.cardBackground : AppColors.secondary }]}>
+      <Text style={[styles.sectionTitle, { color: isDarkMode ? colors.text : 'white' }]}>
+        {section.title}
+      </Text>
+      
+      <View style={styles.sectionSummary}>
+        <View style={styles.summaryItem}>
+          <FontAwesome name="arrow-up" size={12} color={AppColors.primary} />
+          <Text style={[styles.summaryText, { color: AppColors.primary }]}>
+            {formattedIncome}
+          </Text>
+        </View>
+        <View style={styles.summaryItem}>
+          <FontAwesome name="arrow-down" size={12} color={AppColors.danger} />
+          <Text style={[styles.summaryText, { color: AppColors.danger }]}>
+            {formattedExpense}
+          </Text>
         </View>
       </View>
-    );
-  }
+    </View>
+  );
+};
+
+// Statistics Component with Currency Conversion
+const StatisticsCard = ({ filterStats, colors }: { filterStats: any, colors: any }) => {
+  const { formatCurrency } = useCurrency();
+  const [formattedStats, setFormattedStats] = useState({
+    totalIncome: '',
+    totalExpense: '',
+    assets: '',
+    liabilities: '',
+    netBalance: ''
+  });
+
+  useEffect(() => {
+    const formatStats = async () => {
+      try {
+        const [income, expense, assets, liabilities, net] = await Promise.all([
+          formatCurrency(filterStats.totalIncome),
+          formatCurrency(filterStats.totalExpense),
+          formatCurrency(filterStats.assets),
+          formatCurrency(filterStats.liabilities),
+          formatCurrency(Math.abs(filterStats.netBalance))
+        ]);
+
+        setFormattedStats({
+          totalIncome: income,
+          totalExpense: expense,
+          assets: assets,
+          liabilities: liabilities,
+          netBalance: (filterStats.netBalance >= 0 ? '+' : '-') + net
+        });
+      } catch (error) {
+        // Fallback formatting
+        setFormattedStats({
+          totalIncome: `+${filterStats.totalIncome.toFixed(2)}`,
+          totalExpense: `-${filterStats.totalExpense.toFixed(2)}`,
+          assets: `+${filterStats.assets.toFixed(2)}`,
+          liabilities: `-${filterStats.liabilities.toFixed(2)}`,
+          netBalance: `${filterStats.netBalance >= 0 ? '+' : '-'}${Math.abs(filterStats.netBalance).toFixed(2)}`
+        });
+      }
+    };
+    formatStats();
+  }, [filterStats, formatCurrency]);
+
+  return (
+    <View style={[styles.statsContainer, { backgroundColor: colors.cardBackground }]}>
+      <View style={styles.statsGrid}>
+        <View style={styles.statItem}>
+          <View style={[styles.statIcon, { backgroundColor: AppColors.primary + '22' }]}>
+            <FontAwesome name="arrow-up" size={20} color={AppColors.primary} />
+          </View>
+          <Text style={[styles.statLabel, { color: colors.subText }]}>Income</Text>
+          <Text style={[styles.statValue, { color: AppColors.primary }]}>
+            {formattedStats.totalIncome}
+          </Text>
+        </View>
+        <View style={styles.statItem}>
+          <View style={[styles.statIcon, { backgroundColor: AppColors.danger + '22' }]}>
+            <FontAwesome name="arrow-down" size={20} color={AppColors.danger} />
+          </View>
+          <Text style={[styles.statLabel, { color: colors.subText }]}>Expenses</Text>
+          <Text style={[styles.statValue, { color: AppColors.danger }]}>
+            {formattedStats.totalExpense}
+          </Text>
+        </View>
+        <View style={styles.statItem}>
+          <View style={[styles.statIcon, { backgroundColor: AppColors.secondary + '22' }]}>
+            <FontAwesome name="line-chart" size={20} color={AppColors.secondary} />
+          </View>
+          <Text style={[styles.statLabel, { color: colors.subText }]}>Assets</Text>
+          <Text style={[styles.statValue, { color: AppColors.info }]}>
+            {formattedStats.assets}
+          </Text>
+        </View>
+        <View style={styles.statItem}>
+          <View style={[styles.statIcon, { backgroundColor: '#FF9800' + '22' }]}>
+            <FontAwesome name="credit-card" size={20} color="#FF9800" />
+          </View>
+          <Text style={[styles.statLabel, { color: colors.subText }]}>Liabilities</Text>
+          <Text style={[styles.statValue, { color: AppColors.warning }]}>
+            {formattedStats.liabilities}
+          </Text>
+        </View>
+        <View style={styles.statItem}>
+          <View style={[styles.statIcon, { backgroundColor: AppColors.secondary + '22' }]}>
+            <FontAwesome name="balance-scale" size={20} color={AppColors.secondary} />
+          </View>
+          <Text style={[styles.statLabel, { color: colors.subText }]}>Net</Text>
+          <Text style={[styles.statValue, { color: filterStats.netBalance >= 0 ? AppColors.primary : AppColors.danger }]}>
+            {formattedStats.netBalance}
+          </Text>
+        </View>
+        <View style={styles.statItem}>
+          <View style={[styles.statIcon, { backgroundColor: colors.inputBackground }]}>
+            <FontAwesome name="list" size={20} color={colors.text} />
+          </View>
+          <Text style={[styles.statLabel, { color: colors.subText }]}>Transactions</Text>
+          <Text style={[styles.statValue, { color: colors.text }]}>
+            {filterStats.transactionCount}
+          </Text>
+        </View>
+      </View>
+    </View>
+  );
+};
+  const renderFilterStats = () => {
+    return <StatisticsCard filterStats={filterStats} colors={colors} />;
+  };
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Modern Header */}

@@ -2,6 +2,7 @@ import os
 from flask import Flask, jsonify, request, make_response
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
+from dotenv import load_dotenv
 from models.models import db
 from api.auth import auth_bp
 from api.transactions import transactions_bp
@@ -18,6 +19,9 @@ from tasks.scheduler import report_scheduler
 from websocket.socket_server import socketio, init_app as init_socketio
 
 def create_app():
+    # Load environment variables from .env file
+    load_dotenv()
+    
     app = Flask(__name__)
     
     # Configuration with absolute paths

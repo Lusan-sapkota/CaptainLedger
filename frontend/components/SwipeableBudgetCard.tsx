@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -20,6 +20,8 @@ import Animated, {
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { AppColors } from '@/app/(tabs)/_layout';
 import { getBudgets, Budget as ApiBudget } from '@/services/api';
+import { eventEmitter } from '@/utils/eventEmitter';
+import { useCurrency } from '@/components/CurrencyProvider';
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = width - 32;
@@ -32,6 +34,9 @@ interface BudgetPeriod {
     spent: number;
     remaining: number;
     count: number;
+    formattedBudgeted?: string;
+    formattedSpent?: string;
+    formattedRemaining?: string;
   };
 }
 
@@ -39,30 +44,32 @@ interface SwipeableBudgetCardProps {
   colors: any;
   isDarkMode: boolean;
   onCreateBudget: (period: 'daily' | 'weekly' | 'monthly' | 'yearly') => void;
+  currencyReady?: boolean;
 }
 
-export default function SwipeableBudgetCard({ colors, isDarkMode, onCreateBudget }: SwipeableBudgetCardProps) {
-  const [currentIndex, setCurrentIndex] = useState(2); // Start with monthly
+export default function SwipeableBudgetCard({ colors, isDarkMode, onCreateBudget, currencyReady }: SwipeableBudgetCardProps) {
+  const { formatCurrency, convertCurrency, loading: currencyLoading } = useCurrency();
+  const [currentIndex, setCurrentIndex] = useState(0); // Start with daily
   const [budgetPeriods, setBudgetPeriods] = useState<BudgetPeriod[]>([
     {
       id: 'daily',
       label: 'Daily Budget',
-      data: { budgeted: 0, spent: 0, remaining: 0, count: 0 }
+      data: { budgeted: 0, spent: 0, remaining: 0, count: 0, formattedBudgeted: '', formattedSpent: '', formattedRemaining: '' }
     },
     {
       id: 'weekly',
       label: 'Weekly Budget',
-      data: { budgeted: 0, spent: 0, remaining: 0, count: 0 }
+      data: { budgeted: 0, spent: 0, remaining: 0, count: 0, formattedBudgeted: '', formattedSpent: '', formattedRemaining: '' }
     },
     {
       id: 'monthly',
       label: 'Monthly Budget',
-      data: { budgeted: 0, spent: 0, remaining: 0, count: 0 }
+      data: { budgeted: 0, spent: 0, remaining: 0, count: 0, formattedBudgeted: '', formattedSpent: '', formattedRemaining: '' }
     },
     {
       id: 'yearly',
       label: 'Yearly Budget',
-      data: { budgeted: 0, spent: 0, remaining: 0, count: 0 }
+      data: { budgeted: 0, spent: 0, remaining: 0, count: 0, formattedBudgeted: '', formattedSpent: '', formattedRemaining: '' }
     }
   ]);
 
@@ -80,18 +87,67 @@ export default function SwipeableBudgetCard({ colors, isDarkMode, onCreateBudget
           const response = await getBudgets({ period, active_only: true });
           if (response?.data?.budgets) {
             const budgets = response.data.budgets as ApiBudget[];
-            const totalBudgeted = budgets.reduce((sum, b) => sum + b.amount, 0);
-            const totalSpent = budgets.reduce((sum, b) => sum + (b.spent_amount || 0), 0);
             
-            updatedPeriods[i] = {
-              ...updatedPeriods[i],
-              data: {
-                budgeted: totalBudgeted,
-                spent: totalSpent,
-                remaining: totalBudgeted - totalSpent,
-                count: budgets.length
+            // Convert and format currency values
+            let totalBudgeted = 0;
+            let totalSpent = 0;
+            
+            for (const b of budgets) {
+              try {
+                // Convert to primary currency if needed
+                const convertedBudgeted = b.currency ? 
+                  await convertCurrency(b.amount, b.currency) : 
+                  b.amount;
+                const convertedSpent = b.currency ? 
+                  await convertCurrency(b.spent_amount || 0, b.currency) : 
+                  (b.spent_amount || 0);
+                
+                totalBudgeted += convertedBudgeted;
+                totalSpent += convertedSpent;
+              } catch (error) {
+                console.error('Error converting budget currency:', error);
+                // Fallback to original values
+                totalBudgeted += b.amount;
+                totalSpent += (b.spent_amount || 0);
               }
-            };
+            }
+            
+            // Format currency values
+            try {
+              const [formattedBudgeted, formattedSpent, formattedRemaining] = await Promise.all([
+                formatCurrency(totalBudgeted),
+                formatCurrency(totalSpent),
+                formatCurrency(totalBudgeted - totalSpent)
+              ]);
+              
+              updatedPeriods[i] = {
+                ...updatedPeriods[i],
+                data: {
+                  budgeted: totalBudgeted,
+                  spent: totalSpent,
+                  remaining: totalBudgeted - totalSpent,
+                  count: budgets.length,
+                  formattedBudgeted,
+                  formattedSpent,
+                  formattedRemaining
+                }
+              };
+            } catch (error) {
+              console.error('Error formatting budget currency:', error);
+              // Fallback formatting with no currency symbol to avoid "$"
+              updatedPeriods[i] = {
+                ...updatedPeriods[i],
+                data: {
+                  budgeted: totalBudgeted,
+                  spent: totalSpent,
+                  remaining: totalBudgeted - totalSpent,
+                  count: budgets.length,
+                  formattedBudgeted: totalBudgeted.toFixed(2),
+                  formattedSpent: totalSpent.toFixed(2),
+                  formattedRemaining: (totalBudgeted - totalSpent).toFixed(2)
+                }
+              };
+            }
           }
         } catch (error) {
           console.error(`Error loading ${period} budgets:`, error);
@@ -106,7 +162,60 @@ export default function SwipeableBudgetCard({ colors, isDarkMode, onCreateBudget
 
   useEffect(() => {
     loadBudgetData();
+    
+    // Listen for transaction updates to refresh budget data
+    const handleTransactionUpdate = () => {
+      loadBudgetData();
+    };
+
+    eventEmitter.on('transactionAdded', handleTransactionUpdate);
+    eventEmitter.on('transactionUpdated', handleTransactionUpdate);
+    eventEmitter.on('transactionDeleted', handleTransactionUpdate);
+
+    return () => {
+      eventEmitter.off('transactionAdded', handleTransactionUpdate);
+      eventEmitter.off('transactionUpdated', handleTransactionUpdate);
+      eventEmitter.off('transactionDeleted', handleTransactionUpdate);
+    };
   }, []);
+
+  // Initialize currency formatting for zero values
+  useEffect(() => {
+    const initializeCurrencyFormatting = async () => {
+      // Wait for currency system to be ready
+      if (currencyLoading) {
+        return;
+      }
+
+      try {
+        const formattedZero = await formatCurrency(0);
+        
+        setBudgetPeriods(prev => prev.map(period => ({
+          ...period,
+          data: {
+            ...period.data,
+            formattedBudgeted: period.data.formattedBudgeted || formattedZero,
+            formattedSpent: period.data.formattedSpent || formattedZero,
+            formattedRemaining: period.data.formattedRemaining || formattedZero
+          }
+        })));
+      } catch (error) {
+        console.error('Error initializing budget currency formatting:', error);
+        // Set fallback formatting without currency symbol to prevent "$" from showing
+        setBudgetPeriods(prev => prev.map(period => ({
+          ...period,
+          data: {
+            ...period.data,
+            formattedBudgeted: period.data.formattedBudgeted || '0.00',
+            formattedSpent: period.data.formattedSpent || '0.00',
+            formattedRemaining: period.data.formattedRemaining || '0.00'
+          }
+        })));
+      }
+    };
+
+    initializeCurrencyFormatting();
+  }, [formatCurrency, currencyLoading]);
 
   const goToPrevious = () => {
     if (currentIndex > 0) {
@@ -206,7 +315,7 @@ export default function SwipeableBudgetCard({ colors, isDarkMode, onCreateBudget
             {currentPeriod.label}
           </Text>
           <Text style={[styles.subtitle, { color: colors.subText }]}>
-            {Platform.OS === 'web' ? 'Use arrow buttons to change period' : 'Swipe to change period'}
+            {Platform.OS === 'web' ? 'Use the buttons below to change period' : 'Swipe to change period'}
           </Text>
         </View>
         <TouchableOpacity
@@ -225,13 +334,13 @@ export default function SwipeableBudgetCard({ colors, isDarkMode, onCreateBudget
             <View style={styles.budgetItem}>
               <Text style={[styles.budgetLabel, { color: colors.subText }]}>Budgeted</Text>
               <Text style={[styles.budgetValue, { color: AppColors.primary }]}>
-                ${currentPeriod.data.budgeted.toFixed(2)}
+                {(currencyReady !== false) && currentPeriod.data.formattedBudgeted ? currentPeriod.data.formattedBudgeted : '...'}
               </Text>
             </View>
             <View style={styles.budgetItem}>
               <Text style={[styles.budgetLabel, { color: colors.subText }]}>Spent</Text>
               <Text style={[styles.budgetValue, { color: AppColors.danger }]}>
-                ${currentPeriod.data.spent.toFixed(2)}
+                {(currencyReady !== false) && currentPeriod.data.formattedSpent ? currentPeriod.data.formattedSpent : '...'}
               </Text>
             </View>
             <View style={styles.budgetItem}>
@@ -240,7 +349,7 @@ export default function SwipeableBudgetCard({ colors, isDarkMode, onCreateBudget
                 styles.budgetValue,
                 { color: currentPeriod.data.remaining >= 0 ? AppColors.primary : AppColors.danger }
               ]}>
-                ${currentPeriod.data.remaining.toFixed(2)}
+                {(currencyReady !== false) && currentPeriod.data.formattedRemaining ? currentPeriod.data.formattedRemaining : '...'}
               </Text>
             </View>
           </View>
@@ -280,6 +389,39 @@ export default function SwipeableBudgetCard({ colors, isDarkMode, onCreateBudget
           </Text>
         </View>
       )}
+
+      {/* Web Navigation Buttons at the bottom */}
+      {Platform.OS === 'web' && (
+        <View style={styles.webButtonContainer}>
+          <TouchableOpacity
+            style={[
+              styles.webNavButton,
+              { 
+                backgroundColor: currentIndex > 0 ? AppColors.secondary : colors.subText,
+                opacity: currentIndex > 0 ? 0.9 : 0.3
+              }
+            ]}
+            onPress={goToPrevious}
+            disabled={currentIndex === 0}
+          >
+            <FontAwesome name="chevron-left" size={16} color="white" />
+          </TouchableOpacity>
+          
+          <TouchableOpacity
+            style={[
+              styles.webNavButton,
+              { 
+                backgroundColor: currentIndex < budgetPeriods.length - 1 ? AppColors.secondary : colors.subText,
+                opacity: currentIndex < budgetPeriods.length - 1 ? 0.9 : 0.3
+              }
+            ]}
+            onPress={goToNext}
+            disabled={currentIndex === budgetPeriods.length - 1}
+          >
+            <FontAwesome name="chevron-right" size={16} color="white" />
+          </TouchableOpacity>
+        </View>
+      )}
     </Animated.View>
   );
 
@@ -293,41 +435,6 @@ export default function SwipeableBudgetCard({ colors, isDarkMode, onCreateBudget
           <PanGestureHandler onGestureEvent={gestureHandler}>
             {cardContent}
           </PanGestureHandler>
-        )}
-
-        {/* Web Navigation Buttons - Positioned over the card */}
-        {Platform.OS === 'web' && (
-          <>
-            <TouchableOpacity
-              style={[
-                styles.webNavButton,
-                styles.webNavButtonLeft,
-                { 
-                  backgroundColor: currentIndex > 0 ? AppColors.secondary : colors.subText,
-                  opacity: currentIndex > 0 ? 0.9 : 0.3
-                }
-              ]}
-              onPress={goToPrevious}
-              disabled={currentIndex === 0}
-            >
-              <FontAwesome name="chevron-left" size={16} color="white" />
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={[
-                styles.webNavButton,
-                styles.webNavButtonRight,
-                { 
-                  backgroundColor: currentIndex < budgetPeriods.length - 1 ? AppColors.secondary : colors.subText,
-                  opacity: currentIndex < budgetPeriods.length - 1 ? 0.9 : 0.3
-                }
-              ]}
-              onPress={goToNext}
-              disabled={currentIndex === budgetPeriods.length - 1}
-            >
-              <FontAwesome name="chevron-right" size={16} color="white" />
-            </TouchableOpacity>
-          </>
         )}
       </View>
 
@@ -344,38 +451,6 @@ const styles = StyleSheet.create({
   },
   cardWrapper: {
     position: 'relative',
-  },
-  webNavigation: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-    paddingHorizontal: 20,
-  },
-  webNavButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.2,
-    shadowRadius: 2,
-  },
-  webNavButtonLeft: {
-    position: 'absolute',
-    left: 10,
-    top: '50%',
-    marginTop: -20,
-    zIndex: 10,
-  },
-  webNavButtonRight: {
-    position: 'absolute',
-    right: 10,
-    top: '50%',
-    marginTop: -20,
-    zIndex: 10,
   },
   card: {
     borderRadius: 12,
@@ -474,5 +549,24 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
     marginHorizontal: 4,
+  },
+  // New styles for web buttons at bottom
+  webButtonContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginTop: 16,
+    gap: 16,
+  },
+  webNavButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
   },
 });

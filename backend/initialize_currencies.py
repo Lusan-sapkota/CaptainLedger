@@ -1,5 +1,7 @@
 from models.models import db, Currency, ExchangeRate
 from datetime import datetime
+from app import create_app
+from utils.currency_mapping import get_country_currency_mapping
 
 def initialize_currencies():
     """Initialize currency data with major world currencies"""
@@ -76,47 +78,7 @@ def initialize_currencies():
     db.session.commit()
     print("✅ Currency data initialized successfully!")
 
-def get_country_currency_mapping():
-    """Return mapping of countries to their default currencies"""
-    return {
-        'United States': 'USD',
-        'Canada': 'CAD',
-        'United Kingdom': 'GBP',
-        'Australia': 'AUD',
-        'Germany': 'EUR',
-        'France': 'EUR',
-        'Italy': 'EUR',
-        'Spain': 'EUR',
-        'Netherlands': 'EUR',
-        'Japan': 'JPY',
-        'China': 'CNY',
-        'India': 'INR',
-        'Nepal': 'NPR',
-        'Pakistan': 'PKR',
-        'Bangladesh': 'BDT',
-        'Sri Lanka': 'LKR',
-        'South Korea': 'KRW',
-        'Singapore': 'SGD',
-        'Thailand': 'THB',
-        'Malaysia': 'MYR',
-        'Indonesia': 'IDR',
-        'Philippines': 'PHP',
-        'Vietnam': 'VND',
-        'Brazil': 'BRL',
-        'Mexico': 'MXN',
-        'Argentina': 'ARS',
-        'South Africa': 'ZAR',
-        'Nigeria': 'NGN',
-        'Egypt': 'EGP',
-        'United Arab Emirates': 'AED',
-        'Saudi Arabia': 'SAR',
-        'Switzerland': 'CHF',
-        'Norway': 'NOK',
-        'Sweden': 'SEK',
-        'Denmark': 'DKK',
-        'Poland': 'PLN',
-        'Russia': 'RUB',
-    }
-
 if __name__ == "__main__":
-    initialize_currencies()
+    app = create_app()
+    with app.app_context():
+        initialize_currencies()

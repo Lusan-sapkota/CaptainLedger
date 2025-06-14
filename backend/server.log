@@ -1,0 +1,62 @@
+nohup: ignoring input
+ * Restarting with stat
+ * Debugger is active!
+ * Debugger PIN: 900-430-634
+(17712) wsgi starting up on http://0.0.0.0:5000
+(17712) accepted ('127.0.0.1', 41742)
+127.0.0.1 - - [14/Jun/2025 10:21:22] "OPTIONS /api/status HTTP/1.1" 200 379 0.000619
+(17712) accepted ('127.0.0.1', 41752)
+127.0.0.1 - - [14/Jun/2025 10:21:22] "OPTIONS /api/auth/profile HTTP/1.1" 200 379 0.000274
+127.0.0.1 - - [14/Jun/2025 10:21:22] "GET /api/status HTTP/1.1" 200 373 0.000417
+127.0.0.1 - - [14/Jun/2025 10:21:22] "GET /api/auth/profile HTTP/1.1" 200 618 0.032533
+127.0.0.1 - - [14/Jun/2025 10:21:22] "OPTIONS /api/transactions/categories HTTP/1.1" 200 379 0.000363
+127.0.0.1 - - [14/Jun/2025 10:21:22] "GET /api/transactions/categories HTTP/1.1" 200 455 0.005738
+127.0.0.1 - - [14/Jun/2025 10:21:22] "OPTIONS /api/budget?period=daily&active_only=true HTTP/1.1" 200 379 0.000339
+127.0.0.1 - - [14/Jun/2025 10:21:22] "GET /api/auth/profile HTTP/1.1" 200 618 0.036939
+127.0.0.1 - - [14/Jun/2025 10:21:22] "OPTIONS /api/budget/?period=daily&active_only=true HTTP/1.1" 200 379 0.000308
+127.0.0.1 - - [14/Jun/2025 10:21:22] "GET /api/budget/?period=daily&active_only=true HTTP/1.1" 200 338 0.004421
+127.0.0.1 - - [14/Jun/2025 10:21:22] "OPTIONS /api/transactions HTTP/1.1" 200 379 0.000386
+127.0.0.1 - - [14/Jun/2025 10:21:22] "OPTIONS /api/budget?period=weekly&active_only=true HTTP/1.1" 200 379 0.000457
+127.0.0.1 - - [14/Jun/2025 10:21:22] "OPTIONS /api/transactions/ HTTP/1.1" 200 379 0.000306
+127.0.0.1 - - [14/Jun/2025 10:21:22] "GET /api/transactions/ HTTP/1.1" 200 714 0.002923
+127.0.0.1 - - [14/Jun/2025 10:21:22] "OPTIONS /api/budget/?period=weekly&active_only=true HTTP/1.1" 200 379 0.000362
+127.0.0.1 - - [14/Jun/2025 10:21:22] "GET /api/budget/?period=weekly&active_only=true HTTP/1.1" 200 338 0.001478
+127.0.0.1 - - [14/Jun/2025 10:21:22] "OPTIONS /api/loans HTTP/1.1" 200 379 0.000195
+127.0.0.1 - - [14/Jun/2025 10:21:22] "OPTIONS /api/budget?period=monthly&active_only=true HTTP/1.1" 200 379 0.000491
+127.0.0.1 - - [14/Jun/2025 10:21:22] "OPTIONS /api/loans/ HTTP/1.1" 200 379 0.000235
+127.0.0.1 - - [14/Jun/2025 10:21:22] "GET /api/loans/ HTTP/1.1" 200 336 0.003825
+127.0.0.1 - - [14/Jun/2025 10:21:22] "OPTIONS /api/budget/?period=monthly&active_only=true HTTP/1.1" 200 379 0.000216
+127.0.0.1 - - [14/Jun/2025 10:21:22] "GET /api/budget/?period=monthly&active_only=true HTTP/1.1" 200 338 0.001277
+127.0.0.1 - - [14/Jun/2025 10:21:22] "OPTIONS /api/investments HTTP/1.1" 200 379 0.000211
+127.0.0.1 - - [14/Jun/2025 10:21:22] "OPTIONS /api/budget?period=yearly&active_only=true HTTP/1.1" 200 379 0.000231
+127.0.0.1 - - [14/Jun/2025 10:21:22] "OPTIONS /api/investments/ HTTP/1.1" 200 379 0.000221
+127.0.0.1 - - [14/Jun/2025 10:21:22] "GET /api/investments/ HTTP/1.1" 200 342 0.002436
+127.0.0.1 - - [14/Jun/2025 10:21:22] "OPTIONS /api/budget/?period=yearly&active_only=true HTTP/1.1" 200 379 0.000240
+127.0.0.1 - - [14/Jun/2025 10:21:22] "GET /api/budget/?period=yearly&active_only=true HTTP/1.1" 200 338 0.001665
+127.0.0.1 - - [14/Jun/2025 10:21:22] "OPTIONS /api/notifications HTTP/1.1" 200 379 0.000367
+127.0.0.1 - - [14/Jun/2025 10:21:22] "POST /api/notifications HTTP/1.1" 308 642 0.000453
+127.0.0.1 - - [14/Jun/2025 10:21:22] "OPTIONS /api/notifications/ HTTP/1.1" 200 379 0.000251
+127.0.0.1 - - [14/Jun/2025 10:21:22] "POST /api/notifications/ HTTP/1.1" 200 400 0.019173
+127.0.0.1 - - [14/Jun/2025 10:21:22] "OPTIONS /api/notifications/email HTTP/1.1" 200 379 0.000262
+[2025-06-14 10:21:24,321] ERROR in email: Error sending generic email: 'NoneType' object has no attribute 'encode'
+127.0.0.1 - - [14/Jun/2025 10:21:24] "POST /api/notifications/email HTTP/1.1" 500 400 1.838299
+127.0.0.1 - - [14/Jun/2025 10:21:36] "OPTIONS /api/auth/profile HTTP/1.1" 200 379 0.000427
+127.0.0.1 - - [14/Jun/2025 10:21:36] "GET /api/auth/profile HTTP/1.1" 200 618 0.001515
+127.0.0.1 - - [14/Jun/2025 10:21:36] "OPTIONS /api/transactions HTTP/1.1" 200 379 0.000385
+127.0.0.1 - - [14/Jun/2025 10:21:36] "OPTIONS /api/transactions/ HTTP/1.1" 200 379 0.000773
+127.0.0.1 - - [14/Jun/2025 10:21:36] "GET /api/transactions/ HTTP/1.1" 200 714 0.002043
+127.0.0.1 - - [14/Jun/2025 10:21:36] "OPTIONS /api/loans HTTP/1.1" 200 379 0.000365
+127.0.0.1 - - [14/Jun/2025 10:21:36] "OPTIONS /api/loans/ HTTP/1.1" 200 379 0.000306
+127.0.0.1 - - [14/Jun/2025 10:21:36] "GET /api/loans/ HTTP/1.1" 200 336 0.000972
+127.0.0.1 - - [14/Jun/2025 10:21:36] "OPTIONS /api/investments HTTP/1.1" 200 379 0.000221
+127.0.0.1 - - [14/Jun/2025 10:21:36] "OPTIONS /api/investments/ HTTP/1.1" 200 379 0.000203
+127.0.0.1 - - [14/Jun/2025 10:21:36] "GET /api/investments/ HTTP/1.1" 200 342 0.001008
+127.0.0.1 - - [14/Jun/2025 10:21:36] "OPTIONS /api/notifications HTTP/1.1" 200 379 0.000259
+127.0.0.1 - - [14/Jun/2025 10:21:36] "POST /api/notifications HTTP/1.1" 308 642 0.000544
+127.0.0.1 - - [14/Jun/2025 10:21:36] "OPTIONS /api/notifications/ HTTP/1.1" 200 379 0.000286
+127.0.0.1 - - [14/Jun/2025 10:21:37] "POST /api/notifications/ HTTP/1.1" 200 400 0.016223
+127.0.0.1 - - [14/Jun/2025 10:21:37] "OPTIONS /api/notifications/email HTTP/1.1" 200 379 0.000323
+[2025-06-14 10:21:38,825] ERROR in email: Error sending generic email: 'NoneType' object has no attribute 'encode'
+127.0.0.1 - - [14/Jun/2025 10:21:38] "POST /api/notifications/email HTTP/1.1" 500 400 1.810236
+✅ Database tables created successfully
+Flask app running with JWT_SECRET_KEY starting with: jwt-secret...

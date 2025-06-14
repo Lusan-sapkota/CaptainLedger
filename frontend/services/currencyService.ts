@@ -113,15 +113,23 @@ class CurrencyService {
   // Get user's currency preferences
   async getUserCurrencyPreferences(): Promise<CurrencyPreference[]> {
     try {
+      console.log('Fetching user currency preferences from API...');
       const response = await getUserCurrencyPreferences();
+      console.log('API response:', response.data);
+      
       // Map API preferences to local CurrencyPreference type
       const apiPreferences = response.data.preferences || [];
-      return apiPreferences.map((pref: any) => ({
+      console.log('API preferences:', apiPreferences);
+      
+      const mapped = apiPreferences.map((pref: any) => ({
         id: pref.id ?? '',
         currency_code: pref.currency_code ?? pref.code ?? '',
         is_primary: pref.is_primary ?? false,
         display_order: pref.display_order ?? 0,
       }));
+      console.log('Mapped preferences:', mapped);
+      
+      return mapped;
     } catch (error) {
       console.error('Error fetching currency preferences:', error);
       return [];
@@ -146,20 +154,30 @@ class CurrencyService {
   // Get user's primary currency
   async getPrimaryCurrency(): Promise<string> {
     try {
+      console.log('Getting primary currency...');
+      
       // First check local cache
       const cached = await AsyncStorage.getItem('primary_currency');
+      console.log('Cached primary currency:', cached);
+      
       if (cached) return cached;
 
       // Then check user preferences from API
+      console.log('No cached currency, fetching from API...');
       const preferences = await this.getUserCurrencyPreferences();
+      console.log('API preferences:', preferences);
+      
       const primary = preferences.find(p => p.is_primary);
+      console.log('Primary preference found:', primary);
       
       if (primary) {
+        console.log('Setting cached currency to:', primary.currency_code);
         await AsyncStorage.setItem('primary_currency', primary.currency_code);
         return primary.currency_code;
       }
 
       // Fallback to USD
+      console.log('No primary preference found, falling back to USD');
       return 'USD';
     } catch (error) {
       console.error('Error getting primary currency:', error);
@@ -207,10 +225,99 @@ class CurrencyService {
     }
   }
 
-  // Convert amount between currencies
-  async convertCurrency(amount: number, fromCurrency: string, toCurrency: string): Promise<number> {
+  // Enhanced conversion with better caching and fallbacks
+  async convertCurrency(amount: number, fromCurrency: string, toCurrency?: string): Promise<number> {
+    if (!toCurrency) {
+      toCurrency = await this.getPrimaryCurrency();
+    }
+    
+    if (fromCurrency === toCurrency) return amount;
+    
     const rate = await this.getExchangeRate(fromCurrency, toCurrency);
     return amount * rate;
+  }
+
+  // Convert multiple amounts with single API call when possible
+  async convertMultiple(items: Array<{amount: number, currency: string}>): Promise<Array<{amount: number, convertedAmount: number}>> {
+    const primaryCurrency = await this.getPrimaryCurrency();
+    const results = [];
+    
+    for (const item of items) {
+      try {
+        const convertedAmount = await this.convertCurrency(item.amount, item.currency, primaryCurrency);
+        results.push({
+          amount: item.amount,
+          convertedAmount
+        });
+      } catch (error) {
+        console.error('Error converting amount:', error);
+        results.push({
+          amount: item.amount,
+          convertedAmount: item.amount // fallback to original amount
+        });
+      }
+    }
+    
+    return results;
+  }
+
+  // Bulk convert multiple items efficiently
+  async convertBulk(items: Array<{
+    item_id: string;
+    item_type: string;
+    amount: number;
+    from_currency: string;
+    to_currency: string;
+  }>): Promise<Array<{
+    item_id: string;
+    item_type: string;
+    success: boolean;
+    original_amount?: number;
+    converted_amount?: number;
+    from_currency?: string;
+    to_currency?: string;
+    exchange_rate?: number;
+    error?: string;
+  }>> {
+    try {
+      const { convertBulkCurrency } = await import('./api');
+      const response = await convertBulkCurrency(items);
+      return response.data.conversions;
+    } catch (error) {
+      console.error('Error in bulk currency conversion:', error);
+      
+      // Fallback to individual conversions
+      const results = [];
+      for (const item of items) {
+        try {
+          const convertedAmount = await this.convertCurrency(
+            item.amount, 
+            item.from_currency, 
+            item.to_currency
+          );
+          const rate = item.from_currency === item.to_currency ? 1 : convertedAmount / item.amount;
+          
+          results.push({
+            item_id: item.item_id,
+            item_type: item.item_type,
+            success: true,
+            original_amount: item.amount,
+            converted_amount: convertedAmount,
+            from_currency: item.from_currency,
+            to_currency: item.to_currency,
+            exchange_rate: rate
+          });
+        } catch (conversionError) {
+          results.push({
+            item_id: item.item_id,
+            item_type: item.item_type,
+            success: false,
+            error: 'Conversion failed'
+          });
+        }
+      }
+      return results;
+    }
   }
 
   // Format currency amount with proper symbol and decimal places
