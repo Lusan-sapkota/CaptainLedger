@@ -83,8 +83,12 @@ export default function AboutScreen() {
             synchronization to your own server.
           </Text>
           <Text style={[styles.description, { color: colors.text }]}>
-            The system provides seamless tracking of income and expenses while maintaining full control of your personal 
-            financial information. No third-party servers, no data mining, just pure financial tracking.
+            The system provides seamless tracking of income, expenses, loans, investments, assets, and liabilities, 
+            all while maintaining full control of your personal financial information. No third-party servers, no data mining, just pure financial tracking.
+          </Text>
+          <Text style={[styles.description, { color: colors.text }]}>
+            Features like offline functionality, secure end-to-end encryption, and a robust real-time currency conversion system make CaptainLedger 
+            ideal for privacy-conscious users and travelers who need reliable financial management anywhere.
           </Text>
         </View>
 
@@ -185,13 +189,34 @@ export default function AboutScreen() {
             <Text style={[styles.linkText, { color: colors.text }]}>Report Issues</Text>
             <FontAwesome name="external-link" size={14} color={colors.subText} />
           </TouchableOpacity>
+
+          {/* Donation button */}
+          <TouchableOpacity
+            style={[styles.linkButton, { marginTop: 20, justifyContent: 'center' }]}
+            onPress={() => openLink('https://captainledger.com/donate')}
+          >
+            <FontAwesome name="heart" size={20} color={AppColors.primary} />
+            <Text style={[styles.linkText, { color: AppColors.primary, fontWeight: 'bold' }]}>
+              Support CaptainLedger - Donate
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {/* Developer Info */}
         <View style={[styles.section, { backgroundColor: colors.cardBackground }]}>
           <Text style={[styles.sectionTitle, { color: colors.text }]}>Developer</Text>
           <Text style={[styles.description, { color: colors.text }]}>
-            Built with ❤️ for privacy-conscious individuals who want to take control of their financial data.
+            Built with ❤️ by Lusan Sapkota, a passionate developer focused on privacy, offline-first apps, and empowering users with control over their data.
+          </Text>
+          <Text style={[styles.description, { color: colors.text }]}>
+            Reach out on{' '}
+            <Text style={{ color: AppColors.primary, textDecorationLine: 'underline' }} onPress={() => openLink('https://linkedin.com/in/lusansapkota')}>
+              LinkedIn
+            </Text>{' '}
+            or{' '}
+            <Text style={{ color: AppColors.primary, textDecorationLine: 'underline' }} onPress={() => openLink('https://github.com/lusansapkota')}>
+              GitHub
+            </Text>.
           </Text>
           <Text style={[styles.description, { color: colors.subText }]}>
             © 2024 CaptainLedger. All rights reserved.

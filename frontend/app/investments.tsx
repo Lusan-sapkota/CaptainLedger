@@ -335,6 +335,8 @@ export default function InvestmentsScreen() {
       useEffect(() => {
         const formatAnalyticsValues = async () => {
           try {
+            // Analytics values should already be in the user's preferred currency from the backend
+            // Just format them for display
             const [formattedInvested, formattedCurrent, formattedGainLoss] = await Promise.all([
               formatCurrency(analytics.total_invested),
               formatCurrency(analytics.total_current_value),
@@ -347,6 +349,7 @@ export default function InvestmentsScreen() {
               totalGainLoss: (analytics.total_gain_loss >= 0 ? '+' : '-') + formattedGainLoss
             });
           } catch (error) {
+            console.error('Error formatting analytics currency:', error);
             // Fallback formatting
             setFormattedAnalytics({
               totalInvested: analytics.total_invested.toFixed(2),

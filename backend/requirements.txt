@@ -11,3 +11,4 @@ apscheduler
 flask-socketio
 eventlet
 reportlab
+flask-apscheduler

@@ -135,36 +135,34 @@ export default function BudgetsScreen() {
     loadBudgets();
   }, [selectedPeriod, loadBudgets]);
 
-  // Format overview values when budgets change with currency conversion
+  // Format overview values when budgets change with currency conversion - OPTIMIZED
   useEffect(() => {
     const formatOverviewValues = async () => {
+      if (budgets.length === 0) {
+        setFormattedOverview({
+          totalBudget: await formatCurrency(0),
+          totalSpent: await formatCurrency(0),
+          remaining: await formatCurrency(0)
+        });
+        return;
+      }
+
       try {
         const filteredBudgets = budgets.filter(budget => budget.period === selectedPeriod);
         
-        // Calculate totals with currency conversion
-        let totalBudget = 0;
-        let totalSpent = 0;
-        
-        for (const budget of filteredBudgets) {
-          try {
-            // Convert budget amounts to primary currency if needed
-            const convertedAmount = budget.currency ? 
-              await convertCurrency(budget.amount, budget.currency) : 
-              budget.amount;
-            const convertedSpent = budget.currency ? 
-              await convertCurrency(budget.spent, budget.currency) : 
-              budget.spent;
-            
-            totalBudget += convertedAmount;
-            totalSpent += convertedSpent;
-          } catch (error) {
-            console.error('Error converting budget currency in overview:', error);
-            // Fallback to original amounts
-            totalBudget += budget.amount;
-            totalSpent += budget.spent;
-          }
+        if (filteredBudgets.length === 0) {
+          const formattedZero = await formatCurrency(0);
+          setFormattedOverview({
+            totalBudget: formattedZero,
+            totalSpent: formattedZero,
+            remaining: formattedZero
+          });
+          return;
         }
         
+        // Use already converted amounts from budgets (they're already in primary currency)
+        const totalBudget = filteredBudgets.reduce((sum, budget) => sum + budget.amount, 0);
+        const totalSpent = filteredBudgets.reduce((sum, budget) => sum + budget.spent, 0);
         const remaining = totalBudget - totalSpent;
 
         const [formattedBudget, formattedSpent, formattedRemaining] = await Promise.all([
@@ -195,7 +193,7 @@ export default function BudgetsScreen() {
     };
 
     formatOverviewValues();
-  }, [budgets, selectedPeriod, formatCurrency, convertCurrency]);
+  }, [budgets, selectedPeriod, formatCurrency]);
 
   const getProgressColor = (spent: number, amount: number) => {
     const percentage = (spent / amount) * 100;

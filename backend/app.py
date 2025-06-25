@@ -81,14 +81,16 @@ def create_app():
     # Initialize report scheduler
     report_scheduler.init_app(app)
     
-    # Create tables with better error handling
+    # Simple database connection test (optional)
     with app.app_context():
         try:
-            db.create_all()
-            print("✅ Database tables created successfully")
+            # Test the connection using modern SQLAlchemy syntax
+            with db.engine.connect() as connection:
+                connection.execute(db.text('SELECT 1'))
+            print("✅ Database connection verified")
         except Exception as e:
-            print(f"❌ Error creating database tables: {e}")
-            print("Run: python fix_db_complete.py to fix database issues")
+            print(f"⚠️ Database connection issue: {e}")
+            print("Run: python init_db.py to initialize database")
     
     @app.route('/api/status')
     def status():

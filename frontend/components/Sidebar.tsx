@@ -4,223 +4,498 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  Modal,
   ScrollView,
-  StatusBar,
-  SafeAreaView,
-  Animated,
   Dimensions,
+  Alert,
+  Platform,
   Image
 } from 'react-native';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
-import { useRouter } from 'expo-router';
+import { useRouter, Href } from 'expo-router';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '@/components/ThemeProvider';
+import { useAlert } from '@/components/AlertProvider'; 
 import { AppColors } from '@/app/(tabs)/_layout';
-import { LinearGradient } from 'expo-linear-gradient';
+import ConfirmationModal from '@/components/ConfirmationModal';
+
+const { width } = Dimensions.get('window');
 
 interface SidebarProps {
   visible: boolean;
   onClose: () => void;
 }
 
-const { width } = Dimensions.get('window');
-
-interface MenuItem {
-  id: string;
-  title: string;
-  icon: string;
-  route: string;
-  gradient: [string, string];
-}
-
-const menuItems: MenuItem[] = [
-  { id: 'notifications', title: 'Notifications', icon: 'bell', route: '/notifications', gradient: ['#FF6B6B', '#FF8E8E'] },
-  { id: 'loans', title: 'Loans', icon: 'handshake-o', route: '/loans', gradient: ['#4ECDC4', '#44A08D'] },
-  { id: 'investments', title: 'Investments', icon: 'line-chart', route: '/investments', gradient: ['#45B7D1', '#96C93D'] },
-  { id: 'budgets', title: 'Budgets', icon: 'pie-chart', route: '/budgets', gradient: ['#F093FB', '#F5576C'] },
-  { id: 'analytics', title: 'Analytics', icon: 'bar-chart', route: '/analytics', gradient: ['#4facfe', '#00f2fe'] },
-  { id: 'categories', title: 'Categories', icon: 'tags', route: '/categoryManagement', gradient: ['#43e97b', '#38f9d7'] },
-  { id: 'accounts', title: 'Accounts', icon: 'bank', route: '/accounts', gradient: ['#fa709a', '#fee140'] },
-  { id: 'settings', title: 'Settings', icon: 'cog', route: '/settings', gradient: ['#a8edea', '#fed6e3'] },
-  { id: 'help', title: 'Help & Support', icon: 'question-circle', route: '/documentation', gradient: ['#ffecd2', '#fcb69f'] },
-  { id: 'privacy', title: 'Privacy Policy', icon: 'shield', route: '/privacy', gradient: ['#667eea', '#764ba2'] },
-];
-
 export default function Sidebar({ visible, onClose }: SidebarProps) {
-  const { isDarkMode, colors } = useTheme();
+  const { isDarkMode, colors, toggleTheme } = useTheme();
+  const { showAlert } = useAlert();
   const router = useRouter();
-  const slideAnim = React.useRef(new Animated.Value(-width * 0.8)).current;
+  const insets = useSafeAreaInsets();
+  const [showLogoutModal, setShowLogoutModal] = React.useState(false);
 
-  React.useEffect(() => {
-    if (visible) {
-      Animated.spring(slideAnim, {
-        toValue: 0,
-        useNativeDriver: true,
-        tension: 100,
-        friction: 8,
-      }).start();
-    } else {
-      Animated.timing(slideAnim, {
-        toValue: -width * 0.8,
-        duration: 250,
-        useNativeDriver: true,
-      }).start();
+  const menuItems = [
+    { 
+      title: 'Dashboard', 
+      icon: 'dashboard', 
+      route: '/(tabs)/',
+      description: 'Overview of your finances'
+    },
+    { 
+      title: 'Transactions', 
+      icon: 'money', 
+      route: '/(tabs)/transactions',
+      description: 'Manage income and expenses'
+    },
+    { 
+      title: 'History', 
+      icon: 'history', 
+      route: '/(tabs)/history',
+      description: 'View transaction history'
+    },
+    { 
+      title: 'Analytics', 
+      icon: 'bar-chart', 
+      route: '/analytics',
+      description: 'Financial insights'
+    },
+    { 
+      title: 'Budgets', 
+      icon: 'pie-chart', 
+      route: '/budgets',
+      description: 'Budget management'
+    },
+    { 
+      title: 'Investments', 
+      icon: 'line-chart', 
+      route: '/investments',
+      description: 'Track your investments'
+    },
+    { 
+      title: 'Loans', 
+      icon: 'handshake-o', 
+      route: '/loans',
+      description: 'Manage loans'
+    },
+    { 
+      title: 'Profile', 
+      icon: 'user', 
+      route: '/profile',
+      description: 'Manage your profile'
+    },
+    { 
+      title: 'Notifications', 
+      icon: 'bell', 
+      route: '/notifications',
+      description: 'View notifications'
+    },
+    { 
+      title: 'Category', 
+      icon: 'tags', 
+      route: '/categoryManagement',
+      description: 'Manage categories'
+    },
+    { 
+      title: 'Settings', 
+      icon: 'cog', 
+      route: '/settings',
+      description: 'App preferences'
     }
-  }, [visible, slideAnim]);
+  ];
 
-  const handleItemPress = (route: string) => {
+  const supportItems = [
+    {
+      title: 'Help',
+      icon: 'question-circle',
+      route: '/documentation',
+      description: 'Documentation and help'
+    },
+    {
+      title: 'About',
+      icon: 'info-circle',
+      route: '/about',
+      description: 'About CaptainLedger'
+    },
+    {
+      title: 'Donate',
+      icon: 'heart',
+      route: '/donation',
+      description: 'Support development'
+    },
+    {
+      title: 'Privacy Policy',
+      icon: 'shield',
+      route: '/privacy',
+      description: 'How we protect your data'
+    },
+    {
+      title: 'Terms of Service',
+      icon: 'file-text',
+      route: '/terms',
+      description: 'Terms and conditions'
+    }
+  ];
+
+  const handleNavigation = (route: string) => {
     onClose();
-    setTimeout(() => {
-      router.push(route as any);
-    }, 250);
+    router.push(route as Href);
   };
 
+  const handleThemeToggle = () => {
+    try {
+      // Close sidebar first to avoid any state conflicts
+      onClose();
+      // Use setTimeout to ensure sidebar closes before theme changes
+      setTimeout(() => {
+        toggleTheme();
+      }, 100);
+    } catch (error) {
+      console.error('Theme toggle error:', error);
+      showAlert('Error', 'Failed to change theme', 'error');
+    }
+  };
+
+  const handleLogout = () => {
+    setShowLogoutModal(true);
+  };
+
+  const performLogout = async () => {
+    try {
+      console.log('=== LOGOUT START ===');
+      
+      // Set logout flag before clearing storage
+      await AsyncStorage.setItem('user_logged_out', 'true');
+      
+      // Record logout in history
+      try {
+        const loginHistory = await AsyncStorage.getItem('login_history') || '[]';
+        const history = JSON.parse(loginHistory);
+        history.push({
+          date: new Date().toISOString(),
+          device: Platform.OS,
+          type: 'logout'
+        });
+        await AsyncStorage.setItem('login_history', JSON.stringify(history.slice(-10)));
+      } catch (e) {
+        console.error('Failed to record logout history:', e);
+      }
+      
+      // Clear ALL auth-related items
+      const keysToRemove = [
+        'auth_token', 'user_id', 'user_email', 'is_authenticated', 
+        'auth_expiration', 'server_ip', 'is_custom_server', 'session_created',
+        'last_activity', 'device_id', 'user_fullName', 'user_country',
+        'is_offline_mode', 'is_guest_mode', 'completed_onboarding',
+        'profile_setup_completed', 'user_displayName', 'user_avatar',
+        'user_bio', 'user_phone'
+      ];
+      
+      await AsyncStorage.multiRemove(keysToRemove);
+      
+      // Clear all trusted device data
+      const keys = await AsyncStorage.getAllKeys();
+      const trustedDeviceKeys = keys.filter(key => key.startsWith('trusted_device_'));
+      if (trustedDeviceKeys.length > 0) {
+        await AsyncStorage.multiRemove(trustedDeviceKeys);
+      }
+      
+      console.log('All auth and session data cleared');
+      
+      onClose();
+      router.replace('/auth');
+      showAlert('Success', 'Signed out successfully', 'success');
+    } catch (error) {
+      console.error('Logout error:', error);
+      showAlert('Error', 'Failed to sign out', 'error');
+    }
+  };
+
+  if (!visible) {
+    return null;
+  }
+
   return (
-    <Modal
-      animationType="fade"
-      transparent={true}
-      visible={visible}
-      onRequestClose={onClose}
-      statusBarTranslucent
-    >
-      <View style={styles.overlay}>
-        <Animated.View 
-          style={[
-            styles.sidebar, 
-            { 
-              backgroundColor: colors.cardBackground,
-              transform: [{ translateX: slideAnim }]
-            }
-          ]}
-        >
-          <SafeAreaView style={styles.safeArea}>
-            <StatusBar 
-              barStyle={isDarkMode ? 'light-content' : 'dark-content'} 
-              backgroundColor="transparent"
-              translucent
-            />
-            
-            {/* Modern Header with Gradient */}
-            <LinearGradient
-              colors={isDarkMode ? ['#2C3E50', '#34495E'] : [AppColors.primary, AppColors.darkGreen]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.header}
-            >
-              <View style={styles.headerContent}>
-                <View style={styles.logoContainer}>
-                  <View style={styles.logoCircle}>
-                    <Image
-                      source={require('@/assets/images/icon.png')}
-                      style={styles.logoImage}
-                      resizeMode="contain"
-                    />
-                  </View>
-                  <View style={styles.headerTextContainer}>
-                    <Text style={styles.headerTitle}>CaptainLedger</Text>
-                    <Text style={styles.headerSubtitle}>Financial Control</Text>
-                  </View>
+    <React.Fragment>
+      <TouchableOpacity 
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.5)',
+          zIndex: 1000,
+        }}
+        onPress={onClose}
+        activeOpacity={1}
+      />
+      <View style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        bottom: 0,
+        width: Math.min(width * 0.85, 320),
+        backgroundColor: colors.background,
+        zIndex: 1001,
+        shadowColor: '#000',
+        shadowOffset: { width: 2, height: 0 },
+        shadowOpacity: 0.25,
+        shadowRadius: 10,
+        elevation: 10,
+      }}>
+        <SafeAreaView edges={['top', 'left', 'bottom']} style={{ flex: 1 }}>
+          <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+            <View style={{
+              paddingHorizontal: 20,
+              paddingVertical: 25,
+              borderBottomWidth: 1,
+              borderBottomColor: AppColors.secondary,
+              backgroundColor: AppColors.secondary,
+            }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Image
+                    source={require('@/assets/images/icon.png')}
+                    style={{
+                      width: 45,
+                      height: 45,
+                    }}
+                  />
+                  <Text style={{
+                    fontSize: 20,
+                    fontWeight: 'bold',
+                    color: colors.text,
+                    marginLeft: 10
+                  }}>
+                    CaptainLedger
+                  </Text>
                 </View>
-                <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-                  <FontAwesome name="times" size={20} color="white" />
+                <TouchableOpacity onPress={onClose} style={{ padding: 5 }}>
+                  <FontAwesome name="times" size={20} color={colors.text} />
                 </TouchableOpacity>
               </View>
-            </LinearGradient>
-
-            {/* Menu Items with Modern Design */}
-            <ScrollView 
-              style={styles.menuContainer} 
-              showsVerticalScrollIndicator={false}
-              bounces={true}
-              scrollEnabled={true}
-              contentContainerStyle={styles.scrollContent}
-            >
-              <View style={styles.menuSection}>
-                <Text style={[styles.sectionTitle, { color: colors.subText }]}>MAIN MENU</Text>
-                {menuItems.slice(0, 6).map((item, index) => (
-                  <TouchableOpacity
-                    key={item.id}
-                    style={[styles.menuItem, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }]}
-                    onPress={() => handleItemPress(item.route)}
-                    activeOpacity={0.7}
-                  >
-                    <LinearGradient
-                      colors={item.gradient}
-                      style={styles.menuIconContainer}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                    >
-                      <FontAwesome 
-                        name={item.icon as any} 
-                        size={16} 
-                        color="white" 
-                      />
-                    </LinearGradient>
-                    <Text style={[styles.menuText, { color: colors.text }]}>
-                      {item.title}
-                    </Text>
-                    <FontAwesome 
-                      name="chevron-right" 
-                      size={14} 
-                      color={colors.subText} 
-                    />
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              <View style={styles.menuSection}>
-                <Text style={[styles.sectionTitle, { color: colors.subText }]}>SUPPORT</Text>
-                {menuItems.slice(6).map((item) => (
-                  <TouchableOpacity
-                    key={item.id}
-                    style={[styles.menuItem, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }]}
-                    onPress={() => handleItemPress(item.route)}
-                    activeOpacity={0.7}
-                  >
-                    <LinearGradient
-                      colors={item.gradient}
-                      style={styles.menuIconContainer}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                    >
-                      <FontAwesome 
-                        name={item.icon as any} 
-                        size={16} 
-                        color="white" 
-                      />
-                    </LinearGradient>
-                    <Text style={[styles.menuText, { color: colors.text }]}>
-                      {item.title}
-                    </Text>
-                    <FontAwesome 
-                      name="chevron-right" 
-                      size={14} 
-                      color={colors.subText} 
-                    />
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </ScrollView>
-
-            {/* Modern Footer */}
-            <View style={[styles.footer, { borderTopColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }]}>
-              <View style={styles.footerContent}>
-                <FontAwesome name="shield" size={16} color={colors.subText} />
-                <Text style={[styles.footerText, { color: colors.subText }]}>
-                  Version 1.0.0 • Secure & Private
-                </Text>
-              </View>
+              <Text style={{
+                fontSize: 12,
+                color: colors.subText,
+                marginTop: 5,
+                marginLeft: 55
+              }}>
+                Personal Finance Manager
+              </Text>
             </View>
-          </SafeAreaView>
-        </Animated.View>
-        
-        <TouchableOpacity 
-          style={styles.overlayTouch} 
-          activeOpacity={1} 
-          onPress={onClose}
-        />
+            <View style={{ paddingVertical: 10 }}>
+              <Text style={{
+                fontSize: 12,
+                fontWeight: '600',
+                color: colors.subText,
+                paddingHorizontal: 20,
+                paddingVertical: 10,
+                textTransform: 'uppercase',
+                letterSpacing: 1
+              }}>
+                Navigation
+              </Text>
+              {menuItems.map((item, index) => (
+                <TouchableOpacity
+                  key={index}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    paddingHorizontal: 20,
+                    paddingVertical: 12,
+                    marginHorizontal: 10,
+                    borderRadius: 8,
+                    backgroundColor: 'transparent'
+                  }}
+                  onPress={() => handleNavigation(item.route)}
+                  activeOpacity={0.7}
+                >
+                  <FontAwesome 
+                    name={item.icon as any} 
+                    size={18} 
+                    color={AppColors.primary} 
+                    style={{ width: 24 }} 
+                  />
+                  <View style={{ marginLeft: 15, flex: 1 }}>
+                    <Text style={{
+                      fontSize: 16,
+                      fontWeight: '500',
+                      color: colors.text
+                    }}>
+                      {item.title}
+                    </Text>
+                    <Text style={{
+                      fontSize: 12,
+                      color: colors.subText,
+                      marginTop: 2
+                    }}>
+                      {item.description}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <View style={{
+              borderTopWidth: 1,
+              borderTopColor: colors.border,
+              paddingVertical: 10,
+              marginTop: 10
+            }}>
+              <Text style={{
+                fontSize: 12,
+                fontWeight: '600',
+                color: colors.subText,
+                paddingHorizontal: 20,
+                paddingVertical: 10,
+                textTransform: 'uppercase',
+                letterSpacing: 1
+              }}>
+                Support & Info
+              </Text>
+              {supportItems.map((item, index) => (
+                <TouchableOpacity
+                  key={index}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    paddingHorizontal: 20,
+                    paddingVertical: 12,
+                    marginHorizontal: 10,
+                    borderRadius: 8,
+                    backgroundColor: 'transparent'
+                  }}
+                  onPress={() => handleNavigation(item.route)}
+                  activeOpacity={0.7}
+                >
+                  <FontAwesome 
+                    name={item.icon as any} 
+                    size={18} 
+                    color={
+                      item.icon === 'heart' 
+                        ? '#e74c3c' 
+                        : isDarkMode 
+                          ? 'rgba(255,255,255,0.8)'
+                          : AppColors.secondary
+                    } 
+                    style={{ width: 24 }} 
+                  />
+                  <View style={{ marginLeft: 15, flex: 1 }}>
+                    <Text style={{
+                      fontSize: 16,
+                      fontWeight: '500',
+                      color: colors.text
+                    }}>
+                      {item.title}
+                    </Text>
+                    <Text style={{
+                      fontSize: 12,
+                      color: colors.subText,
+                      marginTop: 2
+                    }}>
+                      {item.description}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <View style={{
+              borderTopWidth: 1,
+              borderTopColor: colors.border,
+              paddingTop: 15,
+              paddingBottom: Math.max(insets.bottom, 20),
+              marginTop: 10
+            }}>
+              <TouchableOpacity
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  paddingHorizontal: 20,
+                  paddingVertical: 12,
+                  marginHorizontal: 10,
+                  borderRadius: 8,
+                  backgroundColor: 'transparent'
+                }}
+                onPress={handleThemeToggle}
+                activeOpacity={0.7}
+              >
+                <FontAwesome 
+                  name={isDarkMode ? 'sun-o' : 'moon-o'} 
+                  size={18} 
+                  color={colors.text} 
+                  style={{ width: 24 }} 
+                />
+                <View style={{ marginLeft: 15, flex: 1 }}>
+                  <Text style={{
+                    fontSize: 16,
+                    fontWeight: '500',
+                    color: colors.text
+                  }}>
+                    {isDarkMode ? 'Light Mode' : 'Dark Mode'}
+                  </Text>
+                  <Text style={{
+                    fontSize: 12,
+                    color: colors.subText,
+                    marginTop: 2
+                  }}>
+                    Switch color theme
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  paddingHorizontal: 20,
+                  paddingVertical: 12,
+                  marginHorizontal: 10,
+                  borderRadius: 8,
+                  backgroundColor: 'transparent'
+                }}
+                onPress={handleLogout}
+                activeOpacity={0.7}
+              >
+                <FontAwesome 
+                  name="sign-out" 
+                  size={18} 
+                  color="#e74c3c" 
+                  style={{ width: 24 }} 
+                />
+                <View style={{ marginLeft: 15, flex: 1 }}>
+                  <Text style={{
+                    fontSize: 16,
+                    fontWeight: '500',
+                    color: '#e74c3c'
+                  }}>
+                    Logout
+                  </Text>
+                  <Text style={{
+                    fontSize: 12,
+                    color: colors.subText,
+                    marginTop: 2
+                  }}>
+                    Sign out of your account
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </SafeAreaView>
       </View>
-    </Modal>
+      
+      <ConfirmationModal
+        visible={showLogoutModal}
+        title="Sign Out"
+        message="Are you sure you want to sign out of your account? You will need to log in again to access your data."
+        confirmText="Sign Out"
+        cancelText="Cancel"
+        destructive={true}
+        onConfirm={() => {
+          setShowLogoutModal(false);
+          performLogout();
+        }}
+        onCancel={() => setShowLogoutModal(false)}
+      />
+    </React.Fragment>
   );
 }
 

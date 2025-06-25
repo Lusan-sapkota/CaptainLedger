@@ -129,7 +129,7 @@ export default function TabLayout() {
           name="index"
           options={{
             title: 'Dashboard',
-            tabBarIcon: ({ color }) => <TabBarIcon name="home" color={color} />,
+            tabBarIcon: ({ color }) => <TabBarIcon name="dashboard" color={color} />,
             headerLeft: () => (
               <Pressable
                 onPress={() => setSidebarVisible(true)}

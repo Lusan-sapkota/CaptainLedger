@@ -87,7 +87,7 @@ export default function TransactionsScreen() {
   const [modalVisible, setModalVisible] = useState(false);
   const [newTransaction, setNewTransaction] = useState({
     amount: '',
-    currency: 'USD',
+    currency: primaryCurrency || 'USD',
     category: 'Other',
     note: '',
     date: new Date().toISOString().split('T')[0],
@@ -132,21 +132,30 @@ export default function TransactionsScreen() {
   useEffect(() => {
     loadTransactions();
     loadCategories();
-    
-    // Load currency symbol
-    const loadCurrencySymbol = async () => {
-      try {
-        const primaryCurrency = await formatCurrency(0, 'USD'); // Get primary currency format
-        const symbol = primaryCurrency.replace(/[\d.,]/g, ''); // Extract symbol
-        setCurrencySymbol(symbol || '$');
-      } catch (error) {
-        console.error('Error loading currency symbol:', error);
-        setCurrencySymbol('$');
-      }
-    };
-    
-    loadCurrencySymbol();
-  }, [formatCurrency]);
+    loadCurrencySettings();
+  }, [formatCurrency, primaryCurrency]);
+
+  // Load currency settings and update newTransaction default currency
+  const loadCurrencySettings = async () => {
+    try {
+      // Get the primary currency from the context
+      const currentPrimaryCurrency = primaryCurrency || 'USD';
+      
+      // Format a small amount to get the currency symbol
+      const formattedSample = await formatCurrency(0);
+      const symbol = formattedSample.replace(/[\d.,\s]/g, ''); // Extract symbol
+      setCurrencySymbol(symbol || '$');
+      
+      // Update newTransaction default currency to use primary currency
+      setNewTransaction(prev => ({
+        ...prev,
+        currency: currentPrimaryCurrency
+      }));
+    } catch (error) {
+      console.error('Error loading currency settings:', error);
+      setCurrencySymbol('$');
+    }
+  };
   
   const loadTransactions = async (isRefreshing = false) => {
     if (isRefreshing) {
@@ -223,17 +232,33 @@ export default function TransactionsScreen() {
     }
   };
   
-  // Format currency values for display
+  // Format currency values for display - WITH CURRENCY CONVERSION
   const formatCurrencyValues = useCallback(async (transactions: Transaction[]) => {
     try {
-      const balanceInfo = calculateEnhancedBalance(transactions);
-      const formattedBal = await formatCurrency(balanceInfo.totalBalance);
+      // Calculate balance with currency conversion
+      let totalBalance = 0;
+      
+      for (const t of transactions) {
+        try {
+          const convertedAmount = t.currency ? 
+            await convertCurrency(t.amount, t.currency) : 
+            t.amount;
+          totalBalance += convertedAmount;
+        } catch (error) {
+          console.error('Error converting transaction currency for balance:', error);
+          // Fallback to original amount
+          totalBalance += t.amount;
+        }
+      }
+      
+      const formattedBal = await formatCurrency(totalBalance);
       setFormattedBalance(formattedBal);
     } catch (error) {
       console.error('Error formatting currency values:', error);
-      setFormattedBalance(`$${calculateEnhancedBalance(transactions).totalBalance.toFixed(2)}`);
+      const balanceInfo = calculateEnhancedBalance(transactions);
+      setFormattedBalance(`$${balanceInfo.totalBalance.toFixed(2)}`);
     }
-  }, [formatCurrency]);
+  }, [formatCurrency, convertCurrency]);
   
 
   interface MonthlySummaryData {
@@ -525,10 +550,10 @@ export default function TransactionsScreen() {
       
       setModalVisible(false);
       
-      // Reset form
+      // Reset form with primary currency
       setNewTransaction({
         amount: '',
-        currency: 'USD',
+        currency: primaryCurrency || 'USD',
         category: 'Other',
         note: '',
         date: new Date().toISOString().split('T')[0],
@@ -628,24 +653,59 @@ export default function TransactionsScreen() {
         return;
       }
       
-      // Format the data for CSV with dynamic currency
-      const csvHeader = 'Date,Category,Amount,Currency,Note\n';
+      // Format the data for CSV with currency conversion
+      const csvHeader = 'Date,Category,Original Amount,Original Currency,Converted Amount,Primary Currency,Note\n';
       
-      // Format transaction amounts with dynamic currency
+      // Calculate totals for summary
+      let totalIncome = 0;
+      let totalExpenses = 0;
+      
+      // Format transaction amounts with currency conversion
       const csvContent = await Promise.all(
         transactions.map(async (t) => {
           try {
-            const formattedAmount = await formatCurrency(Math.abs(t.amount));
+            // Convert to primary currency
+            const convertedAmount = t.currency ? 
+              await convertCurrency(Math.abs(t.amount), t.currency) : 
+              Math.abs(t.amount);
+            
+            // Format converted amount
+            const formattedConverted = await formatCurrency(convertedAmount);
             const sign = t.amount < 0 ? '-' : '+';
-            return `"${t.date}","${t.category}","${sign}${formattedAmount}","${primaryCurrency}","${t.note || ''}"`;
+            
+            // Update totals
+            if (t.amount > 0) {
+              totalIncome += convertedAmount;
+            } else {
+              totalExpenses += convertedAmount;
+            }
+            
+            return `"${t.date}","${t.category}","${t.amount}","${t.currency || 'USD'}","${sign}${formattedConverted}","${primaryCurrency}","${t.note || ''}"`;
           } catch (error) {
+            console.error('Error converting currency for export:', error);
             // Fallback formatting
-            return `"${t.date}","${t.category}","${t.amount}","${t.currency}","${t.note || ''}"`;
+            const fallbackAmount = Math.abs(t.amount);
+            if (t.amount > 0) {
+              totalIncome += fallbackAmount;
+            } else {
+              totalExpenses += fallbackAmount;
+            }
+            return `"${t.date}","${t.category}","${t.amount}","${t.currency || 'USD'}","${t.amount}","${t.currency || 'USD'}","${t.note || ''}"`;
           }
         })
       );
       
-      const csvString = csvHeader + csvContent.join('\n');
+      // Add summary at the end
+      const formattedTotalIncome = await formatCurrency(totalIncome);
+      const formattedTotalExpenses = await formatCurrency(totalExpenses);
+      const formattedNetBalance = await formatCurrency(totalIncome - totalExpenses);
+      
+      const csvSummary = `\n"","Summary","","","","",""\n` +
+        `"","Total Income","","","${formattedTotalIncome}","${primaryCurrency}",""\n` +
+        `"","Total Expenses","","","${formattedTotalExpenses}","${primaryCurrency}",""\n` +
+        `"","Net Balance","","","${formattedNetBalance}","${primaryCurrency}",""`;
+      
+      const csvString = csvHeader + csvContent.join('\n') + csvSummary;
       const fileName = `transactions_${new Date().toISOString().split('T')[0]}.csv`;
       
       if (Platform.OS === 'web') {
@@ -656,7 +716,7 @@ export default function TransactionsScreen() {
         link.download = fileName;
         link.click();
         
-        showAlert('Success', 'Transactions exported to CSV successfully', 'success');
+        showAlert('Success', 'Transactions exported to CSV with currency conversion', 'success');
       } else {
         // For native platforms
         showAlert('Export', 'CSV export is available on web version', 'info');
@@ -683,68 +743,131 @@ export default function TransactionsScreen() {
           return;
         }
         
-        // Build HTML content with dynamic currency
+        // Calculate totals with currency conversion
+        let totalIncome = 0;
+        let totalExpenses = 0;
+        
+        // Build HTML content with currency conversion
         let htmlContent = `
           <html>
           <head>
-            <title>Transactions Report</title>
+            <title>Transactions Report - Currency Converted</title>
             <style>
               body { font-family: Arial, sans-serif; padding: 20px; }
               h1 { color: #333; text-align: center; }
-              .date { font-weight: bold; margin-top: 20px; }
-              table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-              th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
-              th { background-color: #f5f5f5; }
-              .expense { color: #f44336; }
+              .summary { background-color: #f5f5f5; padding: 15px; margin: 20px 0; border-radius: 5px; }
+              .summary h3 { margin-top: 0; color: #2E86AB; }
+              .summary-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; }
+              .summary-item { text-align: center; }
+              .summary-label { font-weight: bold; color: #666; }
+              .summary-value { font-size: 18px; margin-top: 5px; }
               .income { color: #4caf50; }
+              .expense { color: #f44336; }
+              .balance { color: #2E86AB; }
+              table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+              th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+              th { background-color: #f5f5f5; font-weight: bold; }
+              .currency-note { font-style: italic; color: #666; margin: 10px 0; }
             </style>
           </head>
           <body>
             <h1>Transactions Report</h1>
             <p>Generated on ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</p>
-            <p>Currency: ${primaryCurrency}</p>
-            <table>
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Category</th>
-                  <th>Note</th>
-                  <th>Amount</th>
-                </tr>
-              </thead>
-              <tbody>
+            <p class="currency-note">All amounts converted to: ${primaryCurrency}</p>
         `;
         
-        // Add transaction rows with dynamic currency formatting
+        // Add transaction rows with currency conversion
+        const transactionRows = [];
         for (const t of transactions) {
           const dateStr = new Date(t.date).toLocaleDateString();
           const amountClass = t.amount < 0 ? 'expense' : 'income';
           const sign = t.amount < 0 ? '-' : '+';
           
           try {
-            const formattedAmount = await formatCurrency(Math.abs(t.amount));
-            htmlContent += `
+            // Convert to primary currency
+            const convertedAmount = t.currency ? 
+              await convertCurrency(Math.abs(t.amount), t.currency) : 
+              Math.abs(t.amount);
+            
+            // Format converted amount
+            const formattedAmount = await formatCurrency(convertedAmount);
+            
+            // Update totals
+            if (t.amount > 0) {
+              totalIncome += convertedAmount;
+            } else {
+              totalExpenses += convertedAmount;
+            }
+            
+            transactionRows.push(`
               <tr>
                 <td>${dateStr}</td>
                 <td>${t.category}</td>
-                <td>${t.note || ''}</td>
+                <td>${t.note || '-'}</td>
+                <td>${t.currency || 'USD'} ${Math.abs(t.amount).toFixed(2)}</td>
                 <td class="${amountClass}">${sign}${formattedAmount}</td>
               </tr>
-            `;
+            `);
           } catch (error) {
+            console.error('Error converting currency for PDF export:', error);
             // Fallback formatting
-            htmlContent += `
+            const fallbackAmount = Math.abs(t.amount);
+            if (t.amount > 0) {
+              totalIncome += fallbackAmount;
+            } else {
+              totalExpenses += fallbackAmount;
+            }
+            
+            transactionRows.push(`
               <tr>
                 <td>${dateStr}</td>
                 <td>${t.category}</td>
-                <td>${t.note || ''}</td>
-                <td class="${amountClass}">${sign}${t.currency} ${Math.abs(t.amount).toFixed(2)}</td>
+                <td>${t.note || '-'}</td>
+                <td>${t.currency || 'USD'} ${Math.abs(t.amount).toFixed(2)}</td>
+                <td class="${amountClass}">${sign}${t.currency || 'USD'} ${Math.abs(t.amount).toFixed(2)}</td>
               </tr>
-            `;
+            `);
           }
         }
         
+        // Format summary totals
+        const formattedTotalIncome = await formatCurrency(totalIncome);
+        const formattedTotalExpenses = await formatCurrency(totalExpenses);
+        const formattedNetBalance = await formatCurrency(totalIncome - totalExpenses);
+        const netBalanceClass = (totalIncome - totalExpenses) >= 0 ? 'income' : 'expense';
+        
+        // Add summary section
         htmlContent += `
+            <div class="summary">
+              <h3>Financial Summary</h3>
+              <div class="summary-grid">
+                <div class="summary-item">
+                  <div class="summary-label">Total Income</div>
+                  <div class="summary-value income">${formattedTotalIncome}</div>
+                </div>
+                <div class="summary-item">
+                  <div class="summary-label">Total Expenses</div>
+                  <div class="summary-value expense">${formattedTotalExpenses}</div>
+                </div>
+                <div class="summary-item">
+                  <div class="summary-label">Net Balance</div>
+                  <div class="summary-value ${netBalanceClass}">${formattedNetBalance}</div>
+                </div>
+              </div>
+            </div>
+            
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Category</th>
+                  <th>Note</th>
+                  <th>Original Amount</th>
+                  <th>Converted Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${transactionRows.join('')}
               </tbody>
             </table>
           </body>
@@ -758,7 +881,7 @@ export default function TransactionsScreen() {
           printWindow.print();
         }, 500);
         
-        showAlert('Success', 'Transactions prepared for PDF export', 'success');
+        showAlert('Success', 'Transactions prepared for PDF export with currency conversion', 'success');
       } else {
         // For native platforms
         showAlert('Export', 'PDF export is available on web version', 'info');

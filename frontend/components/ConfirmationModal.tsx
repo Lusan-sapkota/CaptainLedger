@@ -19,6 +19,7 @@ interface ConfirmationModalProps {
   onCancel: () => void;
   confirmText?: string;
   cancelText?: string;
+  destructive?: boolean;
 }
 
 export default function ConfirmationModal({
@@ -28,7 +29,8 @@ export default function ConfirmationModal({
   onConfirm,
   onCancel,
   confirmText = 'Confirm',
-  cancelText = 'Cancel'
+  cancelText = 'Cancel',
+  destructive = false
 }: ConfirmationModalProps) {
   const { isDarkMode, colors } = useTheme();
 
@@ -81,7 +83,7 @@ export default function ConfirmationModal({
               style={[
                 styles.button,
                 styles.confirmButton,
-                { backgroundColor: AppColors.primary }
+                { backgroundColor: destructive ? AppColors.danger : AppColors.primary }
               ]}
               onPress={onConfirm}
             >

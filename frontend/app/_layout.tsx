@@ -548,7 +548,9 @@ function RootLayoutNav() {
       const testUrl = customServerIp 
         ? `http://${customServerIp}:5000/api/status` 
         : (Platform.OS === 'android' 
-            ? 'http://10.0.2.2:5000/api/status' 
+            ? 'http://192.168.18.2:5000/api/status' 
+            : Platform.OS === 'ios'
+            ? 'http://192.168.18.2:5000/api/status'
             : 'http://localhost:5000/api/status');
       
       console.log(`Testing API connection to: ${testUrl}`);

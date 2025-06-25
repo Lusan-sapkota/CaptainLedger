@@ -5,10 +5,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getLoans, getTransactions, createNotification, sendEmailNotification, getInvestments } from '@/services/api';
 import { Text, View } from '@/components/Themed';
 import { AppColors } from './_layout';
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { getUserProfile } from '@/services/api';
 import { useTheme } from '@/components/ThemeProvider';
-import { useFocusEffect } from '@react-navigation/native'; // Add this import
+import { useFocusEffect } from '@react-navigation/native';
 import { eventEmitter } from '@/utils/eventEmitter';
 import SwipeableBudgetCard from '@/components/SwipeableBudgetCard';
 import { useCurrency } from '@/components/CurrencyProvider';
@@ -66,7 +66,7 @@ export default function DashboardScreen() {
   const [userProfile, setUserProfile] = useState<{email: string, displayName?: string, fullName?: string, profile_picture?: string} | null>(null);
   const [loading, setLoading] = useState(true);
   const { isDarkMode, colors } = useTheme();
-  const { formatCurrency, convertCurrency, loading: currencyLoading } = useCurrency();
+  const { formatCurrency, convertCurrency, primaryCurrency, loading: currencyLoading } = useCurrency();
   const [showPersonalWelcome, setShowPersonalWelcome] = useState(true);
   
   // Create animated values for transitions
@@ -93,6 +93,13 @@ export default function DashboardScreen() {
     if (userProfile?.displayName) return userProfile.displayName;
     if (userProfile?.fullName) return getFirstName(userProfile.fullName);
     return 'User';
+  };
+  
+  // Calculate days remaining for loan deadlines
+  const getDaysRemaining = (deadline: string): number => {
+    const deadlineDate = new Date(deadline);
+    const now = new Date();
+    return Math.ceil((deadlineDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
   };
   
   // Toggle welcome message every 5 seconds
@@ -343,7 +350,6 @@ export default function DashboardScreen() {
       
       try {
         const formattedZero = await formatCurrency(0);
-        console.log('Formatted zero:', formattedZero);
 
         // Only update if we don't have real data yet
         setFormattedStats(prev => ({
@@ -359,16 +365,28 @@ export default function DashboardScreen() {
         }
         
         setCurrencyReady(true);
-        console.log('Currency formatting initialized successfully, currencyReady set to true');
       } catch (error) {
         console.error('Error initializing currency formatting:', error);
-        // Keep currencyReady false to show loading
-        setCurrencyReady(false);
+        // Use fallback values that match the primary currency
+        const fallbackValue = '0.00';
+        setFormattedStats(prev => ({
+          income: prev.income || fallbackValue,
+          expenses: prev.expenses || fallbackValue,
+          balance: prev.balance || fallbackValue,
+          assets: prev.assets || fallbackValue,
+          liabilities: prev.liabilities || fallbackValue
+        }));
+        
+        if (!formattedDailyBudget) {
+          setFormattedDailyBudget(fallbackValue);
+        }
+        
+        setCurrencyReady(true);
       }
     };
 
     initializeCurrencyFormatting();
-  }, [formatCurrency, currencyLoading]);
+  }, [formatCurrency, currencyLoading, primaryCurrency]);
 
   // Set up periodic refresh every 30 seconds when screen is focused
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -389,6 +407,43 @@ export default function DashboardScreen() {
       };
     }, [fetchDashboardData])
   );
+
+  // Memoized currency formatting for monthly stats
+  const formatMonthlyStats = useCallback(async (income: number, expenses: number, balance: number, assets: number, liabilities: number) => {
+    try {
+      const [formattedIncome, formattedExpenses, formattedBalance, formattedAssets, formattedLiabilities] = 
+        await Promise.all([
+          formatCurrency(income),
+          formatCurrency(expenses),
+          formatCurrency(balance),
+          formatCurrency(assets),
+          formatCurrency(liabilities)
+        ]);
+
+      setFormattedStats({
+        income: formattedIncome,
+        expenses: formattedExpenses,
+        balance: formattedBalance,
+        assets: formattedAssets,
+        liabilities: formattedLiabilities
+      });
+
+      // Mark currency as ready after successful formatting
+      setCurrencyReady(true);
+    } catch (error) {
+      console.error('Error formatting currencies:', error);
+      // Set fallback formatted values to avoid showing "$" 
+      setFormattedStats({
+        income: income.toFixed(2),
+        expenses: expenses.toFixed(2), 
+        balance: balance.toFixed(2),
+        assets: assets.toFixed(2),
+        liabilities: liabilities.toFixed(2)
+      });
+      // Still mark as ready so UI doesn't show "..." indefinitely
+      setCurrencyReady(true);
+    }
+  }, [formatCurrency]);
 
   // Calculate monthly statistics with currency conversion
   const calculateMonthlyStats = useCallback(async (transactions: any[], allLoans: any[] = [], allInvestments: any[] = []) => {
@@ -478,43 +533,9 @@ export default function DashboardScreen() {
       liabilities
     });
 
-    // Format currency values
-    try {
-      const [formattedIncome, formattedExpenses, formattedBalance, formattedAssets, formattedLiabilities] = 
-        await Promise.all([
-          formatCurrency(income),
-          formatCurrency(expenses),
-          formatCurrency(balance),
-          formatCurrency(assets),
-          formatCurrency(liabilities)
-        ]);
-
-      console.log('Formatted stats:', { formattedIncome, formattedExpenses, formattedBalance });
-
-      setFormattedStats({
-        income: formattedIncome,
-        expenses: formattedExpenses,
-        balance: formattedBalance,
-        assets: formattedAssets,
-        liabilities: formattedLiabilities
-      });
-
-      // Mark currency as ready after successful formatting
-      setCurrencyReady(true);
-    } catch (error) {
-      console.error('Error formatting currencies:', error);
-      // Set fallback formatted values to avoid showing "$" 
-      setFormattedStats({
-        income: income.toFixed(2),
-        expenses: expenses.toFixed(2), 
-        balance: balance.toFixed(2),
-        assets: assets.toFixed(2),
-        liabilities: liabilities.toFixed(2)
-      });
-      // Still mark as ready so UI doesn't show "..." indefinitely
-      setCurrencyReady(true);
-    }
-  }, [convertCurrency, formatCurrency]);
+    // Use memoized formatting to avoid repeated calculations
+    formatMonthlyStats(income, expenses, balance, assets, liabilities);
+  }, [convertCurrency, formatMonthlyStats]);
 
   // Calculate daily budget with currency conversion
   const calculateDailyBudget = useCallback(async (transactions: any[], loans: any[]) => {
@@ -615,7 +636,7 @@ export default function DashboardScreen() {
   const updateTotalBalance = useCallback((transactions: any[], activeLoans: any[]) => {
     const transactionBalance = transactions.reduce((sum, t) => sum + t.amount, 0);
     
-    // Calculate loan impact on balance
+    // Calculate loan balance impact
     const loanBalance = activeLoans.reduce((sum, loan) => {
       // If the loan is given, add to balance as an asset
       // If the loan is taken, subtract from balance as a liability
@@ -699,36 +720,20 @@ export default function DashboardScreen() {
     }
   };
   
-  const triggerNotifications = async () => {
+  // Check for alerts and send notifications
+  const checkForAlerts = useCallback(async () => {
     try {
-      // Check for loan deadlines approaching
-      const loansApproaching = activeLoans.filter(loan => {
-        const deadline = new Date(loan.deadline);
-        const now = new Date();
-        const diffDays = Math.ceil((deadline.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-        return diffDays <= 3 && diffDays >= 0; // Loans due in 3 days or less
-      });
+      const alerts = [];
       
-      // Create in-app notifications for approaching loans
-      for (const loan of loansApproaching) {
-        const notificationData = {
-          title: 'Loan Payment Reminder',
-          message: `Your loan payment of ${loan.currency} ${loan.amount} is due in ${getDaysRemaining(loan.deadline)} days`,
-          type: 'warning' as 'warning' // Use one of: 'error' | 'info' | 'warning' | 'success'
-        };
-        
-        // Send to notifications API
-        await createNotification({
-          ...notificationData,
-          type: 'warning'
-        });
-        
-        // Send email notification
-        await sendEmailNotification({
-          to: userProfile?.email || 'user@example.com',
-          subject: 'Loan Payment Reminder',
-          message: `Your loan payment of ${loan.currency} ${loan.amount} is due in ${getDaysRemaining(loan.deadline)} days. Contact: ${loan.contact || 'N/A'}`
-        });
+      // Check for upcoming loan payments
+      for (const loan of activeLoans) {
+        const daysRemaining = getDaysRemaining(loan.deadline);
+        if (daysRemaining <= 3 && daysRemaining > 0) {
+          alerts.push({
+            title: 'Loan Payment Due Soon',
+            message: `Your loan payment of ${loan.currency} ${loan.amount} is due in ${daysRemaining} days. Contact: ${loan.contact || 'N/A'}`
+          });
+        }
       }
       
       // Check for budget alerts
@@ -741,67 +746,25 @@ export default function DashboardScreen() {
         const notificationData = {
           title: 'Budget Alert',
           message: `You've already spent ${Math.round((monthlyStats.expenses / monthlyStats.income) * 100)}% of your monthly income and we're only halfway through the month!`,
-          type: 'warning' as 'warning' // Use one of: 'error' | 'info' | 'warning' | 'success'
+          type: 'warning' as 'warning'
         };
         
-        // Send to notifications API
         await createNotification(notificationData);
         
-        // Send email notification
-        await sendEmailNotification({
-          to: userProfile?.email || 'user@example.com',
-          subject: 'Budget Alert',
-          message: `You've already spent ${Math.round((monthlyStats.expenses / monthlyStats.income) * 100)}% of your monthly income and we're only halfway through the month!`
-        });
+        // REMOVED: Email notifications are now handled by the backend with rate limiting
       }
       
-      // Weekly reports on Sunday
-      if (today.getDay() === 0) { // Sunday
-        const weekTransactions = transactions.filter(t => {
-          const txDate = new Date(t.date);
-          const weekAgo = new Date();
-          weekAgo.setDate(weekAgo.getDate() - 7);
-          return txDate >= weekAgo;
-        });
-        await sendEmailNotification({
-          to: userProfile?.email || '',
-          subject: 'Weekly Report',
-          message: `Here is your weekly report:\n\nIncome: ${formattedStats.income}\nExpenses: ${formattedStats.expenses}\nTransactions: ${weekTransactions.length}`
-        });
-      }
+      // REMOVED: Weekly and monthly report logic - handled by backend scheduler only
       
-      // Monthly report on last day of month
-      if (dayOfMonth === daysInMonth) {
-        const monthName = today.toLocaleString('default', { month: 'long' });
-        const year = today.getFullYear();
-        const monthlyTransactions = transactions.filter(t => {
-          const txDate = new Date(t.date);
-          return txDate.getMonth() === today.getMonth() && 
-                 txDate.getFullYear() === today.getFullYear();
-        });
-        const reportMessage = `Here is your monthly report for ${monthName} ${year}:\n\nIncome: ${formattedStats.income}\nExpenses: ${formattedStats.expenses}\nBalance: ${formattedStats.balance}\nTransactions: ${monthlyTransactions.length}`;
-        await sendEmailNotification({
-          to: userProfile?.email || '',
-          subject: `Monthly Report - ${monthName} ${year}`,
-          message: reportMessage
-        });
-      }
     } catch (error) {
-      console.error('Error triggering notifications:', error);
+      console.error('Error checking for alerts:', error);
     }
-  };
-
-  // Helper function to get days remaining
-  const getDaysRemaining = (dateString: string): number => {
-    const deadline = new Date(dateString);
-    const now = new Date();
-    return Math.max(0, Math.ceil((deadline.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
-  };
+  }, [activeLoans, monthlyStats, transactions, formattedStats, userProfile]);
 
   // Call this function after fetching data
   useEffect(() => {
     if (!loading) {
-      triggerNotifications();
+      checkForAlerts();
     }
   }, [loading, transactions, activeLoans, monthlyStats]);
   

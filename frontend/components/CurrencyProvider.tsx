@@ -119,31 +119,53 @@ export const CurrencyProvider: React.FC<CurrencyProviderProps> = ({ children }) 
       try {
         setLoading(true);
         
-        // Load available currencies
+        // Check if user is authenticated before making API calls
+        const authToken = await AsyncStorage.getItem('auth_token');
+        const isAuthenticated = await AsyncStorage.getItem('is_authenticated');
+        
+        // Load available currencies (this endpoint doesn't require auth)
         const allCurrencies = await currencyService.getCurrencies();
         setCurrencies(allCurrencies);
         
-        // Check if user has a saved primary currency
-        let savedCurrency = await currencyService.getPrimaryCurrency();
+        // Only fetch user preferences if authenticated
+        let savedCurrency = 'USD'; // Default fallback
+        
+        if (authToken && isAuthenticated === 'true') {
+          try {
+            // Try to get user's saved primary currency
+            savedCurrency = await currencyService.getPrimaryCurrency();
+          } catch (error) {
+            console.log('Could not fetch user currency preferences, using local storage fallback');
+            // Fallback to local storage
+            savedCurrency = await AsyncStorage.getItem('primary_currency') || 'USD';
+          }
+        } else {
+          // For unauthenticated users, use local storage only
+          savedCurrency = await AsyncStorage.getItem('primary_currency') || 'USD';
+        }
         
         // Check if this is a first-time user with no saved preference
         const hasSavedPreference = await AsyncStorage.getItem('primary_currency');
         
-        // Only auto-detect if there's no saved preference at all
-        if (!hasSavedPreference) {
+        // Only auto-detect if there's no saved preference at all and user is authenticated
+        if (!hasSavedPreference && authToken && isAuthenticated === 'true') {
           const detectedCurrency = getUserCountryCurrency();
           
           // Only set if we have the detected currency in our list and it's not USD
           const currencyExists = allCurrencies.some(c => c.code === detectedCurrency);
           if (currencyExists && detectedCurrency !== 'USD') {
             savedCurrency = detectedCurrency;
-            await currencyService.setPrimaryCurrency(detectedCurrency);
-            
-            showAlert(
-              'Currency Set',
-              `We've set your primary currency to ${detectedCurrency} based on your location. You can change this in Settings.`,
-              'info'
-            );
+            try {
+              await currencyService.setPrimaryCurrency(detectedCurrency);
+              showAlert(
+                'Currency Set',
+                `We've set your primary currency to ${detectedCurrency} based on your location. You can change this in Settings.`,
+                'info'
+              );
+            } catch (error) {
+              console.log('Could not save currency preference to server, saving locally');
+              await AsyncStorage.setItem('primary_currency', detectedCurrency);
+            }
           }
         }
         
@@ -153,7 +175,11 @@ export const CurrencyProvider: React.FC<CurrencyProviderProps> = ({ children }) 
       } catch (error) {
         console.error('Error initializing currency:', error);
         console.log('Currency initialization failed, staying with default USD');
-        showAlert('Currency Error', 'Could not load currency settings. Using USD as default.', 'error');
+        // Don't show alert for authentication errors during initialization
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        if (!errorMessage.includes('401') && !errorMessage.includes('Request failed with status code 401')) {
+          showAlert('Currency Error', 'Could not load currency settings. Using USD as default.', 'error');
+        }
       } finally {
         setLoading(false);
       }
@@ -242,10 +268,7 @@ export const CurrencyProvider: React.FC<CurrencyProviderProps> = ({ children }) 
   // Format currency with the primary currency or specified currency
   const formatCurrency = async (amount: number, currencyCode?: string): Promise<string> => {
     const currency = currencyCode || primaryCurrency;
-    console.log('Formatting currency:', { amount, currencyCode, primaryCurrency, finalCurrency: currency });
-    const result = await currencyService.formatCurrency(amount, currency);
-    console.log('Formatted result:', result);
-    return result;
+    return await currencyService.formatCurrency(amount, currency);
   };
 
   // Convert currency to primary currency or specified target currency

@@ -74,13 +74,11 @@ export default function SwipeableBudgetCard({ colors, isDarkMode, onCreateBudget
   ]);
 
   const translateX = useSharedValue(0);
-  const opacity = useSharedValue(1);
-
-  const loadBudgetData = async () => {
+  const opacity = useSharedValue(1);  const loadBudgetData = async () => {
     try {
       const periods: ('daily' | 'weekly' | 'monthly' | 'yearly')[] = ['daily', 'weekly', 'monthly', 'yearly'];
       const updatedPeriods = [...budgetPeriods];
-
+      
       for (let i = 0; i < periods.length; i++) {
         const period = periods[i];
         try {
@@ -88,31 +86,18 @@ export default function SwipeableBudgetCard({ colors, isDarkMode, onCreateBudget
           if (response?.data?.budgets) {
             const budgets = response.data.budgets as ApiBudget[];
             
-            // Convert and format currency values
+            // Use simplified totals - budgets from API should already be in primary currency
             let totalBudgeted = 0;
             let totalSpent = 0;
             
             for (const b of budgets) {
-              try {
-                // Convert to primary currency if needed
-                const convertedBudgeted = b.currency ? 
-                  await convertCurrency(b.amount, b.currency) : 
-                  b.amount;
-                const convertedSpent = b.currency ? 
-                  await convertCurrency(b.spent_amount || 0, b.currency) : 
-                  (b.spent_amount || 0);
-                
-                totalBudgeted += convertedBudgeted;
-                totalSpent += convertedSpent;
-              } catch (error) {
-                console.error('Error converting budget currency:', error);
-                // Fallback to original values
-                totalBudgeted += b.amount;
-                totalSpent += (b.spent_amount || 0);
-              }
+              // Assume budgets are already converted to primary currency by the backend/API
+              // This reduces unnecessary conversion calls
+              totalBudgeted += b.amount;
+              totalSpent += (b.spent_amount || 0);
             }
             
-            // Format currency values
+            // Format currency values only once
             try {
               const [formattedBudgeted, formattedSpent, formattedRemaining] = await Promise.all([
                 formatCurrency(totalBudgeted),
@@ -182,8 +167,8 @@ export default function SwipeableBudgetCard({ colors, isDarkMode, onCreateBudget
   // Initialize currency formatting for zero values
   useEffect(() => {
     const initializeCurrencyFormatting = async () => {
-      // Wait for currency system to be ready
-      if (currencyLoading) {
+      // Wait for currency system to be ready and don't initialize if currencyReady is explicitly false
+      if (currencyLoading || currencyReady === false) {
         return;
       }
 
@@ -215,7 +200,7 @@ export default function SwipeableBudgetCard({ colors, isDarkMode, onCreateBudget
     };
 
     initializeCurrencyFormatting();
-  }, [formatCurrency, currencyLoading]);
+  }, [formatCurrency, currencyLoading, currencyReady]);
 
   const goToPrevious = () => {
     if (currentIndex > 0) {

@@ -64,10 +64,12 @@ export const COUNTRY_CURRENCY_MAP: Record<string, string> = {
 class CurrencyService {
   private exchangeRateCache: Map<string, ExchangeRate> = new Map();
   private currencyCache: Currency[] | null = null;
+  private formattingCache: Map<string, string> = new Map();
   private lastCacheUpdate: Date | null = null;
   private lastCurrencyCacheUpdate: Date | null = null;
   private cacheExpiry = 1000 * 60 * 60; // 1 hour
   private currencyCacheExpiry = 1000 * 60 * 60 * 24; // 24 hours for currencies
+  private formattingCacheExpiry = 1000 * 60 * 30; // 30 minutes for formatted values
 
   // Get all available currencies with caching
   async getCurrencies(): Promise<Currency[]> {
@@ -162,6 +164,15 @@ class CurrencyService {
       
       if (cached) return cached;
 
+      // Check if user is authenticated before making API call
+      const authToken = await AsyncStorage.getItem('auth_token');
+      const isAuthenticated = await AsyncStorage.getItem('is_authenticated');
+      
+      if (!authToken || isAuthenticated !== 'true') {
+        console.log('User not authenticated, returning USD default');
+        return 'USD';
+      }
+
       // Then check user preferences from API
       console.log('No cached currency, fetching from API...');
       const preferences = await this.getUserCurrencyPreferences();
@@ -181,7 +192,9 @@ class CurrencyService {
       return 'USD';
     } catch (error) {
       console.error('Error getting primary currency:', error);
-      return 'USD';
+      // Return cached value if available, otherwise USD
+      const cached = await AsyncStorage.getItem('primary_currency');
+      return cached || 'USD';
     }
   }
 
@@ -323,16 +336,30 @@ class CurrencyService {
   // Format currency amount with proper symbol and decimal places
   async formatCurrency(amount: number, currencyCode: string): Promise<string> {
     try {
+      // Create cache key
+      const cacheKey = `${amount}_${currencyCode}`;
+      
+      // Check if we have a cached formatted value
+      if (this.formattingCache.has(cacheKey)) {
+        return this.formattingCache.get(cacheKey)!;
+      }
+      
       const currencies = await this.getCurrencies();
       const currency = currencies.find(c => c.code === currencyCode);
       
+      let formatted: string;
       if (currency) {
-        const formatted = amount.toFixed(currency.decimal_places);
-        return `${currency.symbol}${formatted}`;
+        const formattedAmount = amount.toFixed(currency.decimal_places);
+        formatted = `${currency.symbol}${formattedAmount}`;
+      } else {
+        // Fallback formatting
+        formatted = `${currencyCode} ${amount.toFixed(2)}`;
       }
       
-      // Fallback formatting
-      return `${currencyCode} ${amount.toFixed(2)}`;
+      // Cache the formatted result
+      this.formattingCache.set(cacheKey, formatted);
+      
+      return formatted;
     } catch (error) {
       return `${currencyCode} ${amount.toFixed(2)}`;
     }
@@ -342,6 +369,7 @@ class CurrencyService {
   clearCache(): void {
     this.exchangeRateCache.clear();
     this.currencyCache = null;
+    this.formattingCache.clear();
     this.lastCacheUpdate = null;
     this.lastCurrencyCacheUpdate = null;
   }

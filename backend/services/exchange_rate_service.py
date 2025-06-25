@@ -258,6 +258,18 @@ class ExchangeRateService:
             ],
             'source': 'default'
         }
+    
+    def convert_amount(self, amount: float, from_currency: str, to_currency: str) -> Optional[float]:
+        """Convert an amount from one currency to another"""
+        if not amount or amount == 0:
+            return 0.0
+            
+        rate = self.get_exchange_rate(from_currency, to_currency)
+        if rate is None:
+            logger.warning(f"Could not get exchange rate for {from_currency} to {to_currency}")
+            return None
+            
+        return amount * rate
 
 # Global instance
 exchange_rate_service = ExchangeRateService()

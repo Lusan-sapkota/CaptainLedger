@@ -571,7 +571,7 @@ export default function ProfileScreen() {
             style={[styles.actionButton, { borderBottomColor: colors.border, backgroundColor: 'transparent' }]}
             onPress={() => router.push('/changePassword')}
           >
-            <FontAwesome name="lock" size={18} color={AppColors.secondary} style={styles.actionIcon} />
+            <FontAwesome name="lock" size={18} color={colors.text} style={styles.actionIcon} />
             <Text style={[styles.actionText, { color: colors.text, flex: 1 }]}>Change Password</Text>
             <FontAwesome name="chevron-right" size={16} color={colors.subText} />
           </TouchableOpacity>
@@ -580,7 +580,7 @@ export default function ProfileScreen() {
             style={[styles.actionButton, { borderBottomColor: colors.border, backgroundColor: 'transparent' }]}
             onPress={() => router.push('/editProfile')}
           >
-            <FontAwesome name="user-circle" size={18} color={AppColors.secondary} style={styles.actionIcon} />
+            <FontAwesome name="user-circle" size={18} color={colors.text} style={styles.actionIcon} />
             <Text style={[styles.actionText, { color: colors.text, flex: 1 }]}>Edit Profile</Text>
             <FontAwesome name="chevron-right" size={16} color={colors.subText} />
           </TouchableOpacity>
@@ -589,7 +589,7 @@ export default function ProfileScreen() {
             style={[styles.actionButton, { borderBottomColor: colors.border, backgroundColor: 'transparent' }]}
             onPress={() => router.push('/categoryManagement')}
           >
-            <FontAwesome name="tags" size={18} color={AppColors.secondary} style={styles.actionIcon} />
+            <FontAwesome name="tags" size={18} color={colors.text} style={styles.actionIcon} />
             <Text style={[styles.actionText, { color: colors.text, flex: 1 }]}>Manage Categories</Text>
             <FontAwesome name="chevron-right" size={16} color={colors.subText} />
           </TouchableOpacity>
@@ -598,7 +598,7 @@ export default function ProfileScreen() {
             style={[styles.actionButton, { backgroundColor: 'transparent' }]}
             onPress={() => router.push('/about')}
           >
-            <FontAwesome name="info-circle" size={18} color={AppColors.secondary} style={styles.actionIcon} />
+            <FontAwesome name="info-circle" size={18} color={colors.text} style={styles.actionIcon} />
             <Text style={[styles.actionText, { color: colors.text, flex: 1 }]}>About</Text>
             <FontAwesome name="chevron-right" size={16} color={colors.subText} />
           </TouchableOpacity>

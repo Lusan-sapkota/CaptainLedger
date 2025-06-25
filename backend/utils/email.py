@@ -12,6 +12,8 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 import tempfile
 from flask import current_app
+from services.exchange_rate_service import ExchangeRateService
+import time
 
 class EmailService:
     def __init__(self):
@@ -20,6 +22,34 @@ class EmailService:
         self._smtp_port = None
         self._email = None
         self._password = None
+        self.exchange_rate_service = ExchangeRateService()
+        
+    def convert_amount_to_user_currency(self, amount, from_currency, to_currency):
+        """Convert amount to user's preferred currency"""
+        if from_currency == to_currency:
+            return amount
+            
+        try:
+            rate = self.exchange_rate_service.get_exchange_rate(from_currency, to_currency)
+            if rate:
+                return amount * rate
+            return amount
+        except Exception as e:
+            print(f"Error converting currency: {e}")
+            return amount
+    
+    def format_currency_amount(self, amount, currency_code='USD'):
+        """Format amount with proper currency symbol"""
+        currency_symbols = {
+            'USD': '$', 'EUR': '€', 'GBP': '£', 'JPY': '¥', 'NPR': 'Rs.',
+            'INR': '₹', 'CNY': '¥', 'CAD': 'C$', 'AUD': 'A$', 'CHF': 'CHF',
+            'SGD': 'S$', 'HKD': 'HK$', 'THB': '฿', 'KRW': '₩', 'BRL': 'R$',
+            'MXN': '$', 'RUB': '₽', 'ZAR': 'R', 'TRY': '₺', 'SEK': 'kr',
+            'NOK': 'kr', 'DKK': 'kr', 'PLN': 'zł', 'CZK': 'Kč', 'HUF': 'Ft'
+        }
+        
+        symbol = currency_symbols.get(currency_code, currency_code + ' ')
+        return f"{symbol}{amount:.2f}"
         
     @property
     def smtp_server(self):
@@ -45,8 +75,8 @@ class EmailService:
             self._password = os.getenv('SENDER_PASSWORD')
         return self._password
         
-    def create_transaction_pdf(self, transactions, period_name, user_name):
-        """Create a PDF report of transactions"""
+    def create_transaction_pdf(self, transactions, period_name, user_name, user_currency='USD'):
+        """Create a PDF report of transactions with currency conversion"""
         # Create temporary file
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
         
@@ -69,18 +99,31 @@ class EmailService:
         # User info
         story.append(Paragraph(f"<b>User:</b> {user_name}", styles['Normal']))
         story.append(Paragraph(f"<b>Generated:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal']))
+        story.append(Paragraph(f"<b>Currency:</b> {user_currency}", styles['Normal']))
         story.append(Spacer(1, 20))
         
-        # Summary
-        total_income = sum(t['amount'] for t in transactions if t['amount'] > 0)
-        total_expenses = sum(abs(t['amount']) for t in transactions if t['amount'] < 0)
+        # Summary with currency conversion
+        total_income = 0
+        total_expenses = 0
+        
+        for t in transactions:
+            converted_amount = self.convert_amount_to_user_currency(
+                t['amount'], 
+                t.get('currency', 'USD'), 
+                user_currency
+            )
+            if converted_amount > 0:
+                total_income += converted_amount
+            else:
+                total_expenses += abs(converted_amount)
+        
         net_savings = total_income - total_expenses
         
         summary_data = [
             ['Summary', ''],
-            ['Total Income', f"${total_income:.2f}"],
-            ['Total Expenses', f"${total_expenses:.2f}"],
-            ['Net Savings', f"${net_savings:.2f}"],
+            ['Total Income', self.format_currency_amount(total_income, user_currency)],
+            ['Total Expenses', self.format_currency_amount(total_expenses, user_currency)],
+            ['Net Savings', self.format_currency_amount(net_savings, user_currency)],
             ['Transaction Count', str(len(transactions))]
         ]
         
@@ -110,8 +153,12 @@ class EmailService:
             table_data = [['Date', 'Category', 'Description', 'Amount']]
             
             for transaction in sorted_transactions:
-                amount = transaction['amount']
-                amount_str = f"${abs(amount):.2f}"
+                amount = self.convert_amount_to_user_currency(
+                    transaction['amount'],
+                    transaction.get('currency', 'USD'),
+                    user_currency
+                )
+                amount_str = self.format_currency_amount(abs(amount), user_currency)
                 if amount < 0:
                     amount_str = f"-{amount_str}"
                 else:
@@ -156,11 +203,28 @@ class EmailService:
         doc.build(story)
         return temp_file.name
 
-    def send_weekly_report(self, user_email, user_name, transactions):
-        """Send weekly financial report"""
+    def send_weekly_report(self, user_email, user_name, transactions, user_currency='USD'):
+        """Send weekly financial report with currency conversion"""
         try:
             # Create PDF
-            pdf_path = self.create_transaction_pdf(transactions, "Weekly", user_name)
+            pdf_path = self.create_transaction_pdf(transactions, "Weekly", user_name, user_currency)
+            
+            # Calculate totals with currency conversion
+            total_income = 0
+            total_expenses = 0
+            
+            for t in transactions:
+                converted_amount = self.convert_amount_to_user_currency(
+                    t['amount'], 
+                    t.get('currency', 'USD'), 
+                    user_currency
+                )
+                if converted_amount > 0:
+                    total_income += converted_amount
+                else:
+                    total_expenses += abs(converted_amount)
+            
+            net_amount = total_income - total_expenses
             
             # Email content
             subject = f"CaptainLedger - Weekly Report ({datetime.now().strftime('%Y-%m-%d')})"
@@ -182,9 +246,9 @@ class EmailService:
                         <h3 style="color: #2E86AB; margin-top: 0;">Summary</h3>
                         <ul style="list-style: none; padding: 0;">
                             <li style="margin: 10px 0;"><strong>Transactions:</strong> {len(transactions)}</li>
-                            <li style="margin: 10px 0; color: #28a745;"><strong>Income:</strong> ${sum(t['amount'] for t in transactions if t['amount'] > 0):.2f}</li>
-                            <li style="margin: 10px 0; color: #dc3545;"><strong>Expenses:</strong> ${sum(abs(t['amount']) for t in transactions if t['amount'] < 0):.2f}</li>
-                            <li style="margin: 10px 0;"><strong>Net:</strong> ${sum(t['amount'] for t in transactions):.2f}</li>
+                            <li style="margin: 10px 0; color: #28a745;"><strong>Income:</strong> {self.format_currency_amount(total_income, user_currency)}</li>
+                            <li style="margin: 10px 0; color: #dc3545;"><strong>Expenses:</strong> {self.format_currency_amount(total_expenses, user_currency)}</li>
+                            <li style="margin: 10px 0;"><strong>Net:</strong> {self.format_currency_amount(net_amount, user_currency)}</li>
                         </ul>
                     </div>
                     
@@ -213,15 +277,27 @@ class EmailService:
             current_app.logger.error(f"Error sending weekly report: {e}")
             raise
 
-    def send_monthly_report(self, user_email, user_name, transactions, month_name):
-        """Send monthly financial report"""
+    def send_monthly_report(self, user_email, user_name, transactions, month_name, user_currency='USD'):
+        """Send monthly financial report with currency conversion"""
         try:
             # Create PDF
-            pdf_path = self.create_transaction_pdf(transactions, f"Monthly - {month_name}", user_name)
+            pdf_path = self.create_transaction_pdf(transactions, f"Monthly - {month_name}", user_name, user_currency)
             
-            # Calculate additional monthly stats
-            total_income = sum(t['amount'] for t in transactions if t['amount'] > 0)
-            total_expenses = sum(abs(t['amount']) for t in transactions if t['amount'] < 0)
+            # Calculate additional monthly stats with currency conversion
+            total_income = 0
+            total_expenses = 0
+            
+            for t in transactions:
+                converted_amount = self.convert_amount_to_user_currency(
+                    t['amount'], 
+                    t.get('currency', 'USD'), 
+                    user_currency
+                )
+                if converted_amount > 0:
+                    total_income += converted_amount
+                else:
+                    total_expenses += abs(converted_amount)
+            
             net_savings = total_income - total_expenses
             avg_daily_expense = total_expenses / 30 if total_expenses > 0 else 0
             
@@ -247,12 +323,12 @@ class EmailService:
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                             <div>
                                 <p style="margin: 5px 0;"><strong>Total Transactions:</strong> {len(transactions)}</p>
-                                <p style="margin: 5px 0; color: #28a745;"><strong>Total Income:</strong> ${total_income:.2f}</p>
-                                <p style="margin: 5px 0; color: #dc3545;"><strong>Total Expenses:</strong> ${total_expenses:.2f}</p>
+                                <p style="margin: 5px 0; color: #28a745;"><strong>Total Income:</strong> {self.format_currency_amount(total_income, user_currency)}</p>
+                                <p style="margin: 5px 0; color: #dc3545;"><strong>Total Expenses:</strong> {self.format_currency_amount(total_expenses, user_currency)}</p>
                             </div>
                             <div>
-                                <p style="margin: 5px 0;"><strong>Net Savings:</strong> ${net_savings:.2f}</p>
-                                <p style="margin: 5px 0;"><strong>Avg. Daily Expense:</strong> ${avg_daily_expense:.2f}</p>
+                                <p style="margin: 5px 0;"><strong>Net Savings:</strong> {self.format_currency_amount(net_savings, user_currency)}</p>
+                                <p style="margin: 5px 0;"><strong>Avg. Daily Expense:</strong> {self.format_currency_amount(avg_daily_expense, user_currency)}</p>
                                 <p style="margin: 5px 0;"><strong>Savings Rate:</strong> {(net_savings/total_income*100 if total_income > 0 else 0):.1f}%</p>
                             </div>
                         </div>
@@ -293,32 +369,54 @@ class EmailService:
 
     def send_generic_email(self, to_email, subject, html_body):
         """Send a generic HTML email without attachment"""
-        try:
-            # Check if email credentials are available
-            if not self.email or not self.password:
-                current_app.logger.error(f"Email credentials not configured: email={self.email}, password={'*' * len(self.password) if self.password else None}")
-                raise Exception("Email credentials not configured")
-            
-            msg = MIMEMultipart()
-            msg['From'] = self.email
-            msg['To'] = to_email
-            msg['Subject'] = subject
-            
-            # Add HTML body
-            msg.attach(MIMEText(html_body, 'html'))
-            
-            # Send email
-            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
-            server.starttls()
-            server.login(self.email, self.password)
-            server.send_message(msg)
-            server.quit()
-            
-            current_app.logger.info(f"Generic email sent successfully to {to_email}")
-            
-        except Exception as e:
-            current_app.logger.error(f"Error sending generic email: {e}")
-            raise
+        max_retry_attempts = 2
+        retry_count = 0
+        
+        while retry_count <= max_retry_attempts:
+            try:
+                # Check if email credentials are available
+                if not self.email or not self.password:
+                    current_app.logger.error(f"Email credentials not configured: email={self.email}, password={'*' * len(self.password) if self.password else None}")
+                    raise Exception("Email credentials not configured")
+                
+                msg = MIMEMultipart()
+                msg['From'] = self.email
+                msg['To'] = to_email
+                msg['Subject'] = subject
+                
+                # Add HTML body
+                msg.attach(MIMEText(html_body, 'html'))
+                
+                # Send email
+                server = smtplib.SMTP(self.smtp_server, self.smtp_port)
+                server.starttls()
+                server.login(self.email, self.password)
+                server.send_message(msg)
+                server.quit()
+                
+                current_app.logger.info(f"Generic email sent successfully to {to_email}")
+                return True
+                
+            except smtplib.SMTPResponseException as e:
+                retry_count += 1
+                
+                # Handle rate limiting specifically (550 code)
+                if e.smtp_code == 550:
+                    current_app.logger.warning(f"Email rate limit detected (550): {e.smtp_error}. Attempt {retry_count}/{max_retry_attempts}")
+                    if retry_count <= max_retry_attempts:
+                        # Exponential backoff: wait longer between each retry
+                        time.sleep(5 * retry_count)
+                        continue
+                    else:
+                        current_app.logger.error(f"Rate limit error sending email after {max_retry_attempts} attempts: {e}")
+                        raise Exception(f"Email rate limit exceeded: {e.smtp_error}")
+                else:
+                    current_app.logger.error(f"SMTP error sending email: {e}")
+                    raise
+                    
+            except Exception as e:
+                current_app.logger.error(f"Error sending generic email: {e}")
+                raise
 
     def send_email_with_attachment(self, to_email, subject, html_body, attachment_path, attachment_name):
         """Send email with PDF attachment"""

@@ -256,13 +256,52 @@ def get_investment_analytics():
     try:
         current_user_id = get_jwt_identity()
         
+        # Get user and their preferred currency
+        from models.models import User
+        user = User.query.get(current_user_id)
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+            
+        user_currency = user.preferred_currency or 'USD'
+        
+        # Get exchange rate service
+        from services.exchange_rate_service import exchange_rate_service
+        
         investments = Investment.query.filter_by(user_id=current_user_id).all()
         
-        total_invested = sum(inv.initial_amount for inv in investments)
-        total_current_value = sum(inv.current_value or inv.initial_amount for inv in investments)
+        # Convert all amounts to user's preferred currency
+        total_invested = 0
+        total_current_value = 0
+        
+        for inv in investments:
+            # Convert initial amount to user currency
+            converted_initial = exchange_rate_service.convert_amount(
+                inv.initial_amount, 
+                inv.currency or 'USD', 
+                user_currency
+            )
+            if converted_initial is not None:
+                total_invested += converted_initial
+            else:
+                # Fallback to original amount if conversion fails
+                total_invested += inv.initial_amount
+                
+            # Convert current value to user currency
+            current_val = inv.current_value or inv.initial_amount
+            converted_current = exchange_rate_service.convert_amount(
+                current_val, 
+                inv.currency or 'USD', 
+                user_currency
+            )
+            if converted_current is not None:
+                total_current_value += converted_current
+            else:
+                # Fallback to original amount if conversion fails
+                total_current_value += current_val
+        
         total_roi = ((total_current_value - total_invested) / total_invested * 100) if total_invested > 0 else 0
         
-        # Group by investment type
+        # Group by investment type with currency conversion
         by_type = {}
         for inv in investments:
             inv_type = inv.investment_type or 'Unknown'
@@ -275,17 +314,64 @@ def get_investment_analytics():
                 }
             
             by_type[inv_type]['count'] += 1
-            by_type[inv_type]['total_invested'] += inv.initial_amount
-            by_type[inv_type]['total_current_value'] += inv.current_value or inv.initial_amount
+            
+            # Convert amounts for this investment type
+            converted_initial = exchange_rate_service.convert_amount(
+                inv.initial_amount, 
+                inv.currency or 'USD', 
+                user_currency
+            )
+            if converted_initial is not None:
+                by_type[inv_type]['total_invested'] += converted_initial
+            else:
+                by_type[inv_type]['total_invested'] += inv.initial_amount
+                
+            current_val = inv.current_value or inv.initial_amount
+            converted_current = exchange_rate_service.convert_amount(
+                current_val, 
+                inv.currency or 'USD', 
+                user_currency
+            )
+            if converted_current is not None:
+                by_type[inv_type]['total_current_value'] += converted_current
+            else:
+                by_type[inv_type]['total_current_value'] += current_val
         
         # Calculate ROI for each type
         for type_data in by_type.values():
             if type_data['total_invested'] > 0:
                 type_data['avg_roi'] = ((type_data['total_current_value'] - type_data['total_invested']) / type_data['total_invested']) * 100
         
-        # Best and worst performers
-        best_performer = max(investments, key=lambda x: x.actual_roi or 0) if investments else None
-        worst_performer = min(investments, key=lambda x: x.actual_roi or 0) if investments else None
+        # Best and worst performers (calculate ROI in user currency)
+        best_performer = None
+        worst_performer = None
+        best_roi = float('-inf')
+        worst_roi = float('inf')
+        
+        for inv in investments:
+            # Calculate ROI in user currency
+            converted_initial = exchange_rate_service.convert_amount(
+                inv.initial_amount, 
+                inv.currency or 'USD', 
+                user_currency
+            )
+            current_val = inv.current_value or inv.initial_amount
+            converted_current = exchange_rate_service.convert_amount(
+                current_val, 
+                inv.currency or 'USD', 
+                user_currency
+            )
+            
+            if converted_initial and converted_current and converted_initial > 0:
+                roi = ((converted_current - converted_initial) / converted_initial) * 100
+                
+                if roi > best_roi:
+                    best_roi = roi
+                    best_performer = inv
+                    
+                if roi < worst_roi:
+                    worst_roi = roi
+                    worst_performer = inv
         
         return jsonify({
             'analytics': {
@@ -297,12 +383,13 @@ def get_investment_analytics():
                 'by_investment_type': by_type,
                 'best_performer': {
                     'name': best_performer.name,
-                    'roi': best_performer.actual_roi
+                    'roi': best_roi
                 } if best_performer else None,
                 'worst_performer': {
                     'name': worst_performer.name,
-                    'roi': worst_performer.actual_roi
-                } if worst_performer else None
+                    'roi': worst_roi
+                } if worst_performer else None,
+                'currency': user_currency  # Include the currency used for calculations
             }
         }), 200
         

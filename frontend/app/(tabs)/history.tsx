@@ -263,58 +263,147 @@ export default function HistoryScreen() {
     loadTransactions();
   }, [loadTransactions]);
   
-  // Optimized grouping with better performance
-  const groupedTransactions = useMemo(() => {
-    if (transactions.length === 0) return [];
-    
-    const groups: Record<string, Transaction[]> = {};
-    
-    transactions.forEach(transaction => {
-      const date = new Date(transaction.date);
-      const monthYear = `${date.toLocaleString('default', { month: 'long' })} ${date.getFullYear()}`;
-      
-      if (!groups[monthYear]) {
-        groups[monthYear] = [];
+  // State for currency-converted grouped transactions
+  const [groupedTransactions, setGroupedTransactions] = useState<Array<{
+    title: string;
+    data: Transaction[];
+    totalIncome: number;
+    totalExpense: number;
+  }>>([]);
+
+  // Effect to convert and group transactions with proper currency conversion
+  useEffect(() => {
+    const groupAndConvertTransactions = async () => {
+      if (transactions.length === 0) {
+        setGroupedTransactions([]);
+        return;
       }
-      groups[monthYear].push(transaction);
-    });
-    
-    return Object.entries(groups)
-      .map(([title, data]) => ({
-        title,
-        data: data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
-        totalIncome: data.reduce((sum, t) => t.amount > 0 ? sum + t.amount : sum, 0),
-        totalExpense: data.reduce((sum, t) => t.amount < 0 ? sum + Math.abs(t.amount) : sum, 0)
-      }))
-      .sort((a, b) => {
+      
+      const groups: Record<string, Transaction[]> = {};
+      
+      transactions.forEach(transaction => {
+        const date = new Date(transaction.date);
+        const monthYear = `${date.toLocaleString('default', { month: 'long' })} ${date.getFullYear()}`;
+        
+        if (!groups[monthYear]) {
+          groups[monthYear] = [];
+        }
+        groups[monthYear].push(transaction);
+      });
+      
+      // Convert all amounts to user's preferred currency before calculating totals
+      const convertedGroups = await Promise.all(
+        Object.entries(groups).map(async ([title, data]) => {
+          try {
+            // Convert each transaction amount to preferred currency
+            const convertedAmounts = await Promise.all(
+              data.map(async (transaction) => {
+                try {
+                  return await convertCurrency(transaction.amount, transaction.currency || 'USD');
+                } catch (error) {
+                  console.error('Error converting transaction currency:', error);
+                  return transaction.amount; // Fallback to original amount
+                }
+              })
+            );
+            
+            // Calculate totals using converted amounts
+            const totalIncome = convertedAmounts.reduce((sum, amount, index) => 
+              amount > 0 ? sum + amount : sum, 0
+            );
+            const totalExpense = convertedAmounts.reduce((sum, amount, index) => 
+              amount < 0 ? sum + Math.abs(amount) : sum, 0
+            );
+            
+            return {
+              title,
+              data: data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+              totalIncome,
+              totalExpense
+            };
+          } catch (error) {
+            console.error('Error processing group:', title, error);
+            // Fallback to original calculation without conversion
+            return {
+              title,
+              data: data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+              totalIncome: data.reduce((sum, t) => t.amount > 0 ? sum + t.amount : sum, 0),
+              totalExpense: data.reduce((sum, t) => t.amount < 0 ? sum + Math.abs(t.amount) : sum, 0)
+            };
+          }
+        })
+      );
+      
+      // Sort by date descending
+      const sortedGroups = convertedGroups.sort((a, b) => {
         const dateA = new Date(a.data[0]?.date || 0);
         const dateB = new Date(b.data[0]?.date || 0);
         return dateB.getTime() - dateA.getTime();
       });
-  }, [transactions]);
+      
+      setGroupedTransactions(sortedGroups);
+    };
+
+    groupAndConvertTransactions();
+  }, [transactions, convertCurrency]);
 
   // Export functions with dynamic currency
   const exportToCSV = async () => {
     try {
       setExportLoading(true);
       
-      const csvHeader = 'Date,Category,Amount,Currency,Note\n';
+      const csvHeader = 'Date,Category,Original Amount,Original Currency,Converted Amount,Primary Currency,Note\n';
       
-      // Format transaction amounts with dynamic currency
+      // Calculate totals for summary
+      let totalIncome = 0;
+      let totalExpenses = 0;
+      
+      // Format transaction amounts with currency conversion
       const csvContent = await Promise.all(
         transactions.map(async (t) => {
           try {
-            const formattedAmount = await formatCurrency(Math.abs(t.amount));
+            // Convert to primary currency
+            const convertedAmount = t.currency ? 
+              await convertCurrency(Math.abs(t.amount), t.currency) : 
+              Math.abs(t.amount);
+            
+            // Format converted amount
+            const formattedConverted = await formatCurrency(convertedAmount);
             const sign = t.amount < 0 ? '-' : '+';
-            return `"${t.date}","${t.category}","${sign}${formattedAmount}","${primaryCurrency}","${t.note || ''}"`;
+            
+            // Update totals
+            if (t.amount > 0) {
+              totalIncome += convertedAmount;
+            } else {
+              totalExpenses += convertedAmount;
+            }
+            
+            return `"${t.date}","${t.category}","${t.amount}","${t.currency || 'USD'}","${sign}${formattedConverted}","${primaryCurrency}","${t.note || ''}"`;
           } catch (error) {
+            console.error('Error converting currency for history export:', error);
             // Fallback formatting
-            return `"${t.date}","${t.category}","${t.amount.toFixed(2)}","${t.currency}","${t.note || ''}"`;
+            const fallbackAmount = Math.abs(t.amount);
+            if (t.amount > 0) {
+              totalIncome += fallbackAmount;
+            } else {
+              totalExpenses += fallbackAmount;
+            }
+            return `"${t.date}","${t.category}","${t.amount}","${t.currency || 'USD'}","${t.amount}","${t.currency || 'USD'}","${t.note || ''}"`;
           }
         })
       );
       
-      const csvString = csvHeader + csvContent.join('\n');
+      // Add summary at the end
+      const formattedTotalIncome = await formatCurrency(totalIncome);
+      const formattedTotalExpenses = await formatCurrency(totalExpenses);
+      const formattedNetBalance = await formatCurrency(totalIncome - totalExpenses);
+      
+      const csvSummary = `\n"","Summary","","","","",""\n` +
+        `"","Total Income","","","${formattedTotalIncome}","${primaryCurrency}",""\n` +
+        `"","Total Expenses","","","${formattedTotalExpenses}","${primaryCurrency}",""\n` +
+        `"","Net Balance","","","${formattedNetBalance}","${primaryCurrency}",""`;
+      
+      const csvString = csvHeader + csvContent.join('\n') + csvSummary;
       const fileName = `transaction_history_${dateRange.startDate}_to_${dateRange.endDate}.csv`;
       
       if (Platform.OS === 'web') {
@@ -342,14 +431,37 @@ export default function HistoryScreen() {
     try {
       setExportLoading(true);
       
+      // Calculate overall totals with currency conversion
+      let totalIncome = 0;
+      let totalExpenses = 0;
+      
       // Generate HTML content for PDF with dynamic currency
       const groupedHTML = await Promise.all(
         groupedTransactions.map(async (group) => {
+          let groupIncome = 0;
+          let groupExpenses = 0;
+          
           const transactionsHTML = await Promise.all(
             group.data.map(async (t) => {
               try {
-                const formattedAmount = await formatCurrency(Math.abs(t.amount));
+                // Convert to primary currency
+                const convertedAmount = t.currency ? 
+                  await convertCurrency(Math.abs(t.amount), t.currency) : 
+                  Math.abs(t.amount);
+                
+                // Format converted amount
+                const formattedAmount = await formatCurrency(convertedAmount);
                 const sign = t.amount < 0 ? '-' : '+';
+                
+                // Update group and total totals
+                if (t.amount > 0) {
+                  groupIncome += convertedAmount;
+                  totalIncome += convertedAmount;
+                } else {
+                  groupExpenses += convertedAmount;
+                  totalExpenses += convertedAmount;
+                }
+                
                 return `
                   <tr>
                     <td>${new Date(t.date).toLocaleDateString()}</td>
@@ -357,19 +469,31 @@ export default function HistoryScreen() {
                     <td style="color: ${t.amount < 0 ? AppColors.danger : AppColors.primary}">
                       ${sign}${formattedAmount}
                     </td>
-                    <td>${t.note}</td>
+                    <td>${t.currency || 'USD'} ${Math.abs(t.amount).toFixed(2)}</td>
+                    <td>${t.note || '-'}</td>
                   </tr>
                 `;
               } catch (error) {
+                console.error('Error converting currency for PDF export:', error);
                 // Fallback formatting
+                const fallbackAmount = Math.abs(t.amount);
+                if (t.amount > 0) {
+                  groupIncome += fallbackAmount;
+                  totalIncome += fallbackAmount;
+                } else {
+                  groupExpenses += fallbackAmount;
+                  totalExpenses += fallbackAmount;
+                }
+                
                 return `
                   <tr>
                     <td>${new Date(t.date).toLocaleDateString()}</td>
                     <td>${t.category}</td>
                     <td style="color: ${t.amount < 0 ? AppColors.danger : AppColors.primary}">
-                      ${t.amount < 0 ? '-' : '+'}${t.currency} ${Math.abs(t.amount).toFixed(2)}
+                      ${t.amount < 0 ? '-' : '+'}${t.currency || 'USD'} ${Math.abs(t.amount).toFixed(2)}
                     </td>
-                    <td>${t.note}</td>
+                    <td>${t.currency || 'USD'} ${Math.abs(t.amount).toFixed(2)}</td>
+                    <td>${t.note || '-'}</td>
                   </tr>
                 `;
               }
@@ -377,24 +501,24 @@ export default function HistoryScreen() {
           );
 
           try {
-            const [formattedIncome, formattedExpense] = await Promise.all([
-              formatCurrency(group.totalIncome),
-              formatCurrency(group.totalExpense)
-            ]);
+            const formattedGroupIncome = await formatCurrency(groupIncome);
+            const formattedGroupExpense = await formatCurrency(groupExpenses);
 
             return `
               <div class="month-section">
                 <h3>${group.title}</h3>
                 <div class="month-summary">
-                  <p>Income: <span class="income">${formattedIncome}</span></p>
-                  <p>Expenses: <span class="expense">${formattedExpense}</span></p>
+                  <p>Income: <span class="income">${formattedGroupIncome}</span></p>
+                  <p>Expenses: <span class="expense">${formattedGroupExpense}</span></p>
+                  <p>Net: <span class="${groupIncome - groupExpenses >= 0 ? 'income' : 'expense'}">${await formatCurrency(groupIncome - groupExpenses)}</span></p>
                 </div>
                 <table>
                   <thead>
                     <tr>
                       <th>Date</th>
                       <th>Category</th>
-                      <th>Amount</th>
+                      <th>Converted Amount</th>
+                      <th>Original Amount</th>
                       <th>Note</th>
                     </tr>
                   </thead>
@@ -405,20 +529,23 @@ export default function HistoryScreen() {
               </div>
             `;
           } catch (error) {
+            console.error('Error formatting group totals:', error);
             // Fallback formatting
             return `
               <div class="month-section">
                 <h3>${group.title}</h3>
                 <div class="month-summary">
-                  <p>Income: <span class="income">${group.totalIncome.toFixed(2)}</span></p>
-                  <p>Expenses: <span class="expense">${group.totalExpense.toFixed(2)}</span></p>
+                  <p>Income: <span class="income">${groupIncome.toFixed(2)}</span></p>
+                  <p>Expenses: <span class="expense">${groupExpenses.toFixed(2)}</span></p>
+                  <p>Net: <span class="${groupIncome - groupExpenses >= 0 ? 'income' : 'expense'}">${(groupIncome - groupExpenses).toFixed(2)}</span></p>
                 </div>
                 <table>
                   <thead>
                     <tr>
                       <th>Date</th>
                       <th>Category</th>
-                      <th>Amount</th>
+                      <th>Converted Amount</th>
+                      <th>Original Amount</th>
                       <th>Note</th>
                     </tr>
                   </thead>
@@ -432,13 +559,25 @@ export default function HistoryScreen() {
         })
       );
       
+      // Format overall totals
+      const formattedTotalIncome = await formatCurrency(totalIncome);
+      const formattedTotalExpenses = await formatCurrency(totalExpenses);
+      const formattedNetBalance = await formatCurrency(totalIncome - totalExpenses);
+      const netBalanceClass = (totalIncome - totalExpenses) >= 0 ? 'income' : 'expense';
+      
       const html = `
         <html>
           <head>
             <style>
               body { font-family: Arial, sans-serif; padding: 20px; }
-              h1 { color: #333; }
+              h1 { color: #333; text-align: center; }
               h3 { margin-bottom: 10px; color: #555; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+              .overall-summary { background-color: #f5f5f5; padding: 15px; margin: 20px 0; border-radius: 5px; }
+              .overall-summary h3 { margin-top: 0; color: #2E86AB; }
+              .summary-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; }
+              .summary-item { text-align: center; }
+              .summary-label { font-weight: bold; color: #666; }
+              .summary-value { font-size: 18px; margin-top: 5px; }
               .month-section { margin-bottom: 30px; }
               .month-summary { display: flex; justify-content: space-between; margin-bottom: 10px; }
               .income { color: ${AppColors.primary}; font-weight: bold; }
@@ -446,12 +585,32 @@ export default function HistoryScreen() {
               table { width: 100%; border-collapse: collapse; margin-top: 10px; }
               th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
               th { background-color: #f2f2f2; }
+              .currency-note { font-style: italic; color: #666; margin: 10px 0; }
             </style>
           </head>
           <body>
-            <h1>Transaction History</h1>
+            <h1>Transaction History Report</h1>
             <p>Period: ${dateRange.startDate} to ${dateRange.endDate}</p>
-            <p>Currency: ${primaryCurrency}</p>
+            <p class="currency-note">All amounts converted to: ${primaryCurrency}</p>
+            
+            <div class="overall-summary">
+              <h3>Overall Summary</h3>
+              <div class="summary-grid">
+                <div class="summary-item">
+                  <div class="summary-label">Total Income</div>
+                  <div class="summary-value income">${formattedTotalIncome}</div>
+                </div>
+                <div class="summary-item">
+                  <div class="summary-label">Total Expenses</div>
+                  <div class="summary-value expense">${formattedTotalExpenses}</div>
+                </div>
+                <div class="summary-item">
+                  <div class="summary-label">Net Balance</div>
+                  <div class="summary-value ${netBalanceClass}">${formattedNetBalance}</div>
+                </div>
+              </div>
+            </div>
+            
             ${groupedHTML.join('')}
           </body>
         </html>
