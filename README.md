@@ -55,6 +55,22 @@ No ads. No analytics. No corporate tracking. Just a clean, offline-first finance
 
 ---
 
+## 🤝 Contributing
+
+CaptainLedger is a community-friendly, open-source project. Contributions are welcome!
+
+**To contribute:**
+
+1. **Fork** the repository
+2. Create a new branch following this format:
+   `feature/your-feature-name` or `fix/your-fix-description`
+3. **Push** your changes
+4. Submit a **pull request** with a clear description of what you’ve done
+
+💡 *Tips: Make sure your code is clean, tested, and aligns with the project's privacy-first principles.*
+
+---
+
 ## 📄 License
 
 **AGPL-3.0 License** — ensuring CaptainLedger remains **free, open-source, and user-respecting forever**.
@@ -64,4 +80,3 @@ No ads. No analytics. No corporate tracking. Just a clean, offline-first finance
 ## 👨‍💻 Built With Love
 
 Made with ❤️ by an independent developer who believes **financial privacy** should be a **right**, not a luxury.
-
